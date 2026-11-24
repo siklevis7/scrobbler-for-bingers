@@ -1,8 +1,3 @@
-// Experimental: Apple TV+, Hulu, Paramount+, Peacock. No site-specific reader yet; relies on
-// what the page reports to the browser's media controls (the Media Session API).
-BingersScrobbler.start({
-  service: "generic",
-  getMedia() {
-    return BSParse.fromMediaSession();
-  },
-});
+// Apple TV+, Hulu, Paramount+, Peacock: no site-specific reader yet. BSParse.detect tries the
+// media controls, page data, tab title, video label, web address and headings.
+BingersScrobbler.start({ service: "generic" });

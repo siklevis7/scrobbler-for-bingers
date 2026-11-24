@@ -62,9 +62,43 @@ export function pickBest(media, candidates) {
   return best ? best.candidate : null;
 }
 
+/**
+ * Other ways a streaming site's name may differ from Bingers', tried in order when the exact
+ * name finds nothing: "Star Wars: Andor" -> "Andor", "The Office (US)" -> "The Office",
+ * "Doctor Who (2005)" -> "Doctor Who".
+ */
+export function searchVariants(title) {
+  const t = String(title || "").trim();
+  const out = [t];
+  const noTag = t.replace(/\s*\((?:US|UK|AU|CA|NZ|IE|\d{4})\)\s*$/i, "").trim();
+  out.push(noTag);
+  // Only the part after a colon (a franchise prefix); the part before is too broad
+  // ("Avatar: The Last Airbender" must not become "Avatar").
+  const colon = noTag.split(/\s*[:–—]\s+|\s+-\s+/);
+  if (colon.length > 1) out.push(colon[colon.length - 1]);
+  out.push(noTag.replace(/^(the|a|an)\s+/i, ""));
+  return [...new Set(out.filter((v) => v && v.length >= 2))].slice(0, 4);
+}
+
+/** Find an episode by its name in Bingers' episode list (for sites that give no numbers). */
+export function findEpisodeByName(list, name, season = null) {
+  const target = normalize(name);
+  if (!target) return null;
+  let best = null;
+  for (const ep of list || []) {
+    if (season !== null && ep.season !== season) continue;
+    const sim = similarity(target, normalize(ep.title));
+    if (sim >= 0.85 && (!best || sim > best.sim)) best = { sim, ep };
+  }
+  return best ? best.ep : null;
+}
+
 export function mediaLabel(media) {
   if (!media) return "";
   let text = media.title;
+  if (media.kind === "episode" && media.episode == null) {
+    return media.episodeTitle ? `${text}: "${media.episodeTitle}"` : text;
+  }
   if (media.kind === "episode") {
     const s = String(media.season ?? 1).padStart(2, "0");
     const e = String(media.episode).padStart(2, "0");

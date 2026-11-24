@@ -2,8 +2,8 @@
 // Bingers, counts real watch time, and marks things watched at the threshold.
 
 import * as api from "./lib/api.js";
-import { buildItems, mediaLabel, normalize, pickBest } from "./lib/match.js";
-import { applyReport, expired, isReady, mediaKey, neededSeconds, newSession } from "./lib/tracker.js";
+import { buildItems, findEpisodeByName, mediaLabel, normalize, pickBest, searchVariants } from "./lib/match.js";
+import { MIN_VIDEO_SECONDS, applyReport, expired, isReady, mediaKey, neededSeconds, newSession } from "./lib/tracker.js";
 import { syncSites } from "./lib/sites.js";
 import * as store from "./lib/storage.js";
 
@@ -14,15 +14,22 @@ const FRAME_MEDIA_FRESH_MS = 60_000; // how long a title from another frame of t
 let sessions = {}; // `${tabId}|${mediaKey}` -> session
 let tabInfo = {}; // tabId -> { service, sessionId, noMedia, lastSeen, site }
 let tabMedia = {}; // tabId -> { media, at }: latest title any frame of the tab reported
+let tabManual = {}; // tabId -> { media, match, url }: what the user picked with "Fix it"
 const resolving = new Set();
-const loaded = chrome.storage.session.get(["sessions", "tabInfo", "tabMedia"]).then((d) => {
+const loaded = chrome.storage.session.get(["sessions", "tabInfo", "tabMedia", "tabManual"]).then((d) => {
   sessions = d.sessions || {};
   tabInfo = d.tabInfo || {};
   tabMedia = d.tabMedia || {};
+  tabManual = d.tabManual || {};
 });
 
 function persist() {
-  chrome.storage.session.set({ sessions, tabInfo, tabMedia }).catch(() => {});
+  chrome.storage.session.set({ sessions, tabInfo, tabMedia, tabManual }).catch(() => {});
+}
+
+function cacheKeyFor(media) {
+  const kind = media.kind === "episode" ? "show" : "movie";
+  return `${kind}|${normalize(media.title)}|${media.year || ""}`;
 }
 
 function siteOf(sender) {
@@ -56,6 +63,10 @@ async function handle(msg, sender) {
     case "signOut":
       await store.saveSettings({ token: "", account: "" });
       return { ok: true };
+    case "searchTitles":
+      return searchTitles(msg.query);
+    case "chooseTitle":
+      return chooseTitle(msg);
     default:
       return { error: "unknown message" };
   }
@@ -65,18 +76,23 @@ function toMedia(raw) {
   const title = String(raw?.title || "").replace(/\s+/g, " ").trim();
   if (!title) return null;
   const source = raw.source || "player";
+  const year = Number.isInteger(raw.year) ? raw.year : null;
   const episode = Number.isInteger(raw.episode) ? raw.episode : null;
-  if (episode !== null) {
+  // An episode with no number but its name ("Trouble the Water" by "Ozark"): looked up on Bingers.
+  const lookup = episode === null && raw.lookup === true && Boolean(raw.episodeTitle);
+  if (episode !== null || lookup) {
     return {
       kind: "episode",
       title,
       season: Number.isInteger(raw.season) ? raw.season : null,
       episode,
       episodeTitle: raw.episodeTitle || "",
+      lookup,
+      year,
       source,
     };
   }
-  return { kind: "movie", title, year: Number.isInteger(raw.year) ? raw.year : null, source };
+  return { kind: "movie", title, year, source };
 }
 
 async function onReport(msg, tabId, site) {
@@ -98,11 +114,30 @@ async function onReport(msg, tabId, site) {
     return {};
   }
 
+  // What the user picked with "Fix it" wins, for as long as the tab stays on the same page.
+  let manual = tabManual[tabId];
+  if (manual && manual.url && msg.url && manual.url !== msg.url) {
+    delete tabManual[tabId];
+    manual = null;
+  }
+
   const shared = tabMedia[tabId];
-  const raw = msg.media || (shared && now - shared.at < FRAME_MEDIA_FRESH_MS ? shared.media : null);
+  const raw = manual
+    ? manual.media
+    : msg.media || (shared && now - shared.at < FRAME_MEDIA_FRESH_MS ? shared.media : null);
   const media = toMedia(raw);
+  const url = msg.url || tabInfo[tabId]?.url || "";
   if (!media) {
-    tabInfo[tabId] = { service: msg.service, site, noMedia: true, lastSeen: now };
+    const prev = tabInfo[tabId];
+    tabInfo[tabId] = {
+      service: msg.service,
+      site,
+      url,
+      noMedia: true,
+      hint: msg.hint || "",
+      diag: msg.diag || (prev?.noMedia ? prev.diag : null), // what each source saw, for "Copy details"
+      lastSeen: now,
+    };
     setBadge(tabId, null);
     persist();
     return {};
@@ -115,9 +150,21 @@ async function onReport(msg, tabId, site) {
     session.site = site;
     sessions[id] = session;
   }
-  session.media.source = media.source;
+  if (manual && !session.match) {
+    session.match = manual.match;
+    session.state = "tracking";
+    session.message = "";
+  }
+  session.media.source = manual ? "you" : media.source;
   applyReport(session, { ...msg, tabId }, now);
-  tabInfo[tabId] = { service: msg.service, site, sessionId: id, lastSeen: now };
+  // Why watch time isn't counting, shown in the pop-up.
+  session.note =
+    session.duration > 0 && session.duration < MIN_VIDEO_SECONDS
+      ? "This video is under 4 minutes, so it's treated as a trailer or clip and not marked."
+      : !session.counting
+        ? "Muted video that started by itself (likely a preview): click the page to count it."
+        : "";
+  tabInfo[tabId] = { service: msg.service, site, url, sessionId: id, lastSeen: now };
 
   if (!settings.token) {
     session.state = session.state === "done" ? "done" : "error";
@@ -145,14 +192,18 @@ async function resolve(id, token) {
     if (!session) return;
     const { media } = session;
     const kind = media.kind === "episode" ? "show" : "movie";
-    const cacheKey = `${kind}|${normalize(media.title)}|${media.year || ""}`;
+    const cacheKey = cacheKeyFor(media);
     let match = await store.getCachedMatch(cacheKey);
     if (!match) {
       try {
-        const candidate = pickBest(media, await api.search(token, media.title, kind));
-        if (candidate) {
-          match = { ref: candidate.id, name: candidate.title || media.title, year: candidate.year ?? null };
-          await store.setCachedMatch(cacheKey, match);
+        // The exact name first, then variants ("Star Wars: Andor" -> "Andor", "The Office (US)").
+        for (const query of searchVariants(media.title)) {
+          const candidate = pickBest({ ...media, title: query }, await api.search(token, query, kind));
+          if (candidate) {
+            match = { ref: candidate.id, name: candidate.title || media.title, year: candidate.year ?? null };
+            await store.setCachedMatch(cacheKey, match);
+            break;
+          }
         }
       } catch (err) {
         if (err.transient) {
@@ -169,14 +220,34 @@ async function resolve(id, token) {
         return;
       }
     }
+    if (match && media.kind === "episode" && media.episode == null) {
+      // The site gave the episode's name but no numbers: find it in the show's episode list.
+      try {
+        const list = await api.episodes(token, match.ref, media.season ?? undefined);
+        const ep = findEpisodeByName(list, media.episodeTitle, media.season);
+        if (ep) {
+          media.season = ep.season;
+          media.episode = ep.number;
+        } else {
+          session.match = match;
+          session.state = "unmatched";
+          session.message = `Found ${match.name}, but not an episode called "${media.episodeTitle}". Pick it below.`;
+          return;
+        }
+      } catch (err) {
+        session.retryAt = Date.now() + RESOLVE_RETRY_MS;
+        session.message = "Couldn't load the episode list yet; retrying in a minute.";
+        return;
+      }
+    }
     if (match) {
       session.match = match;
       session.state = "tracking";
       session.message = "";
     } else {
       session.state = "unmatched";
-      session.message = `Couldn't find "${media.title}" on Bingers.`;
-      notify(session.message);
+      session.message = `Couldn't find "${media.title}" on Bingers. Pick the right title below.`;
+      notify(`Couldn't find "${media.title}" on Bingers. Click the extension's icon to pick the right title.`);
     }
   } finally {
     resolving.delete(id);
@@ -224,6 +295,73 @@ async function send(session, settings) {
       notify(`${label}: ${session.message}`);
     }
   }
+}
+
+// -- "Fix it": the user searches Bingers and picks the right title --------------------
+
+async function searchTitles(query) {
+  const settings = await store.getSettings();
+  if (!settings.token) return { error: "Sign in first (Settings)." };
+  query = String(query || "").trim();
+  if (!query) return { error: "Type a show or movie name first." };
+  try {
+    const items = await api.search(settings.token, query);
+    return {
+      items: items.slice(0, 8).map((i) => ({ id: i.id, title: i.title, year: i.year ?? null, kind: i.kind })),
+    };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function chooseTitle({ tabId, candidate, season, episode }) {
+  const settings = await store.getSettings();
+  if (!settings.token) return { error: "Sign in first (Settings)." };
+  const info = tabInfo[tabId];
+  if (!info) return { error: "Start playing the video, then try again." };
+  const old = info.sessionId ? sessions[info.sessionId] : null;
+  const isShow = candidate.kind === "show";
+
+  let media;
+  if (isShow) {
+    const ep = episode === "" || episode == null ? old?.media?.episode : Number(episode);
+    if (!Number.isInteger(ep) || ep < 0) return { error: "Enter the episode number." };
+    const se = season === "" || season == null ? old?.media?.season ?? 1 : Number(season);
+    media = {
+      kind: "episode",
+      title: candidate.title,
+      season: Number.isInteger(se) ? se : 1,
+      episode: ep,
+      episodeTitle: old?.media?.episodeTitle || "",
+      source: "you",
+    };
+  } else {
+    media = { kind: "movie", title: candidate.title, year: candidate.year ?? null, source: "you" };
+  }
+  const match = { ref: candidate.id, name: candidate.title, year: candidate.year ?? null };
+
+  // Remember the correction: next time the page shows this name, it means this Bingers title.
+  if (old?.media && (old.media.kind === "episode") === isShow) {
+    await store.setCachedMatch(cacheKeyFor(old.media), match);
+  }
+
+  const id = `${tabId}|${mediaKey(info.service, media)}`;
+  const session = sessions[id] || newSession(tabId, info.service, media, Date.now());
+  if (old && old !== session) {
+    // Keep the watch time already counted under the wrong title.
+    session.watchedSeconds = Math.max(session.watchedSeconds, old.watchedSeconds);
+    Object.assign(session, { progress: old.progress, duration: old.duration, playing: old.playing, lastSeen: old.lastSeen, site: old.site });
+    if (old.state !== "done") delete sessions[info.sessionId];
+  }
+  session.match = match;
+  session.state = "tracking";
+  session.message = "";
+  sessions[id] = session;
+  tabManual[tabId] = { media, match, url: info.url || "" };
+  tabInfo[tabId] = { ...info, noMedia: false, sessionId: id };
+  setBadge(tabId, session);
+  persist();
+  return { ok: true, label: mediaLabel(media) };
 }
 
 async function markNow(tabId) {
@@ -346,5 +484,6 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   for (const [id, s] of Object.entries(sessions)) if (s.tabId === tabId) delete sessions[id];
   delete tabInfo[tabId];
   delete tabMedia[tabId];
+  delete tabManual[tabId];
   persist();
 });

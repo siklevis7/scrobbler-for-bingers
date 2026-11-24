@@ -4,6 +4,13 @@
 import { getSettings, saveSettings } from "./storage.js";
 
 export const UNIVERSAL_SCRIPTS = ["content/parse.js", "content/common.js", "content/sites/universal.js"];
+export const PROBE_SCRIPTS = ["content/page-probe.js"]; // runs in the page to ask its video player
+
+/** Start tracking in an open tab right away, without a reload. */
+export async function injectNow(tabId) {
+  await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: PROBE_SCRIPTS, world: "MAIN" }).catch(() => {});
+  await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: UNIVERSAL_SCRIPTS }).catch(() => {});
+}
 
 /** Turn a manifest match pattern like "https://www.amazon.*" into a RegExp. */
 function patternToRegExp(pattern) {
@@ -36,32 +43,45 @@ export async function isCustomSite(origin) {
 }
 
 async function register(site) {
-  const entry = {
-    id: scriptId(site.origin),
-    matches: [site.origin, ...(site.frameOrigins || [])].map(originPattern),
-    js: UNIVERSAL_SCRIPTS,
-    allFrames: true,
-    runAt: "document_idle",
-    persistAcrossSessions: true,
-  };
-  const existing = await chrome.scripting.getRegisteredContentScripts({ ids: [entry.id] });
-  if (existing.length) await chrome.scripting.updateContentScripts([entry]);
-  else await chrome.scripting.registerContentScripts([entry]);
+  const matches = [site.origin, ...(site.frameOrigins || [])].map(originPattern);
+  const entries = [
+    { id: scriptId(site.origin), js: UNIVERSAL_SCRIPTS },
+    { id: `${scriptId(site.origin)}_probe`, js: PROBE_SCRIPTS, world: "MAIN" },
+  ].map((e) => ({ ...e, matches, allFrames: true, runAt: "document_idle", persistAcrossSessions: true }));
+  const ids = entries.map((e) => e.id);
+  const existing = new Set((await chrome.scripting.getRegisteredContentScripts({ ids })).map((e) => e.id));
+  for (const entry of entries) {
+    if (existing.has(entry.id)) await chrome.scripting.updateContentScripts([entry]);
+    else await chrome.scripting.registerContentScripts([entry]);
+  }
 }
 
-/** Call after chrome.permissions.request() granted access to the site (and its player frames). */
+async function unregister(origin) {
+  await chrome.scripting.unregisterContentScripts({ ids: [scriptId(origin), `${scriptId(origin)}_probe`] }).catch(() => {});
+}
+
+/**
+ * Call after chrome.permissions.request() granted access to the site (and its player frames).
+ * Calling it again for the same site adds more player domains to it.
+ */
 export async function addSite(origin, frameOrigins = []) {
-  const site = { origin, frameOrigins: [...new Set(frameOrigins)].filter((o) => o !== origin), addedAt: Date.now() };
+  const sites = await getCustomSites();
+  const previous = sites.find((s) => s.origin === origin);
+  const frames = [...new Set([...(previous?.frameOrigins || []), ...frameOrigins])].filter((o) => o !== origin);
+  const site = { origin, frameOrigins: frames, addedAt: previous?.addedAt || Date.now() };
   await register(site);
-  const others = (await getCustomSites()).filter((s) => s.origin !== origin);
-  await saveSettings({ customSites: [...others, site] });
+  await saveSettings({ customSites: [...sites.filter((s) => s.origin !== origin), site] });
   return site;
+}
+
+export async function getCustomSite(origin) {
+  return (await getCustomSites()).find((s) => s.origin === origin) || null;
 }
 
 export async function removeSite(origin) {
   const sites = await getCustomSites();
   const site = sites.find((s) => s.origin === origin);
-  await chrome.scripting.unregisterContentScripts({ ids: [scriptId(origin)] }).catch(() => {});
+  await unregister(origin);
   if (site) {
     const origins = [site.origin, ...(site.frameOrigins || [])].map(originPattern);
     await chrome.permissions.remove({ origins }).catch(() => {});
@@ -78,7 +98,7 @@ export async function syncSites() {
       await register(site).catch((e) => console.warn("Couldn't register", site.origin, e));
       kept.push(site);
     } else {
-      await chrome.scripting.unregisterContentScripts({ ids: [scriptId(site.origin)] }).catch(() => {});
+      await unregister(site.origin);
     }
   }
   await saveSettings({ customSites: kept });

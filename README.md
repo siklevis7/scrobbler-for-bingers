@@ -332,10 +332,22 @@ What the icon shows:
 | orange **…** | Bingers wasn't reachable; it's saved and will be sent automatically |
 | red **!** | A problem: click the icon to see what happened |
 
-If the pop-up says **"Can't read title"**, move your mouse over the video so the title
-appears, and wait a few seconds. If it keeps happening on one service, that site has probably
-changed its player. Please [open an issue](https://github.com/siklevis7/scrobbler-for-bingers/issues)
-saying which service.
+### When it can't tell what you're watching, or picks the wrong show
+
+Click the extension's icon. If it says **"Can't read title"** or **"Not found"**, a panel
+called **"What are you watching?"** opens by itself. To fix a wrong title, click
+**Wrong title? Fix it** instead.
+
+1. The name box is already filled in with the extension's best guess. Under it, **"The page
+   says"** shows the raw text it found, such as a file name. Change the name if needed.
+2. Click **Search**. A list of matching Bingers titles appears.
+3. Check **Season** and **Episode**. They're filled in when the extension found them.
+   Leave both empty for a movie.
+4. Click the right title in the list.
+
+The pop-up then says **"Got it: tracking …"**, and tracking continues without losing the time
+you've already watched. Your choice is **remembered**: the next time that name appears (for
+example on the next episode), it's matched automatically.
 
 If the episode isn't finished but you want to mark it anyway, click the icon, then
 **Mark watched now**.
@@ -355,17 +367,66 @@ yourself, with no update needed:
 5. Start or keep playing the video. Within a few seconds, the icon shows a percentage, the same
    as on Netflix. If it doesn't, reload the page once.
 
-How it works out what you're watching on these sites, from most to least reliable:
-1. **The browser's media controls:** many sites tell the browser the show and episode, for
-   the pop-up you see when you press a media key.
-2. **The page's hidden info:** many streaming sites describe each episode or film for search
-   engines (show name, season, episode number).
-3. **The tab title,** but only when it clearly contains an episode number (like `S2E5` or
-   `Season 2 Episode 5`) or a film year (like `Heat (1995)`). A title like "Home" is ignored.
+How it works out what you're watching, on every site, from most to least reliable:
+1. **The player:** on Netflix, Prime Video, Disney+ and Max, the title shown in the player. On
+   Netflix, it first asks Netflix's own data for the video, so it doesn't depend on the screen.
+2. **The page's hidden info:** the show, season and episode (or film and year) that many sites
+   publish for search engines, in any of the usual formats.
+3. **The video player's settings:** many smaller sites use ready-made players (JW Player,
+   Video.js, Plyr, Flowplayer, Bitmovin, Clappr, DPlayer, ArtPlayer) that know the title.
+4. **The browser's media controls:** what the site tells the browser it's playing. This is
+   how Telegram, Plex and Jellyfin are read.
+5. **The tab title,** for example "Watch Ozark Season 2 Episode 3 | SomeSite", or the title of
+   an embedded player's page.
+6. **The text on the player,** even while it's hidden because you aren't moving the mouse.
+   "Next episode" cards are ignored.
+7. **The page's app data,** which many modern sites (and Plex and Jellyfin) carry in the page.
+8. **The video's own label,** or the name of the video file.
+9. **The web address,** including the page's "official" address, for example
+   `.../tv/ozark/season-2/episode-3`.
+10. **The page's headings** above the player.
 
-Click the icon to see which of these it used. If it says **"Can't read title"**, that site
-doesn't share enough information. Please
-[open an issue](https://github.com/siklevis7/scrobbler-for-bingers/issues) with the site's name.
+It understands episodes written in many ways and languages:
+- **Common formats:** `S02E11`, `S2 E11`, `S2:E11`, `S02.E11`, `2x11`, `Season 2 Episode 11`,
+  `Season 2, Ep. 11`, `Episode Two`, `Chapter Three`.
+- **Netflix-style parts:** `Part 3: Episode 2`, `P3:E2`.
+- **Anime-style:** `Show - 12`.
+- **Other languages:** French, Spanish, Portuguese, Italian, German, Dutch, Scandinavian,
+  Turkish, Polish, Russian, Arabic, Chinese, Japanese and Korean.
+
+It also:
+- cleans up file names such as `Most_Dangerous_Game_S02E11_720p_x265_WEBRip.mkv`;
+- removes "Watch", "Online free" and the site's own name;
+- keeps years like "Doctor Who (2005)" to pick the right show;
+- if a name isn't found, tries close variants ("Star Wars: Andor" → "Andor", "The Office (US)"
+  → "The Office");
+- when a site gives only an episode's **name** ("Trouble the Water" from "Ozark"), finds its
+  number on Bingers.
+
+For the less reliable sources, it only accepts a title that has an episode number or a film
+year, so a page called "Home" is ignored. Once it knows what a video is, it sticks to that, so
+a "Next episode" card can't change it halfway through.
+
+Click the icon to see which source it used. If nothing works, use
+[the "What are you watching?" panel](#when-it-cant-tell-what-youre-watching-or-picks-the-wrong-show).
+
+**What it deliberately doesn't count:**
+- **Videos under 4 minutes** (trailers, previews and clips).
+- **Muted videos that started by themselves** (autoplaying previews). They count as soon as
+  you click on the page.
+- **Live TV** (videos with no end).
+
+Watch time still counts in a background tab, and at 2x speed it counts real minutes.
+
+**If the video player is on another site:** sometimes a site later starts using a player
+hosted somewhere else. The pop-up then shows **"Allow the video player too?"**. Click
+**Allow the video player** and accept the browser's request.
+
+**If something still goes wrong,** click **Copy details** in the pop-up's
+"What are you watching?" panel, and paste them into a
+[bug report](https://github.com/siklevis7/scrobbler-for-bingers/issues/new). The details show
+exactly what the extension saw on the page, which is usually enough to fix it in one go. They
+include the page's title and address, but never your Bingers token.
 
 **To stop tracking a site:** open it, click the icon, then **Stop tracking it**. Or go to
 the extension's **Settings > 4. Other sites**, and click **Remove**. This also removes the

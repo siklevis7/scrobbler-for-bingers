@@ -1,14 +1,23 @@
 import { SERVICES } from "../lib/storage.js";
-import { UNIVERSAL_SCRIPTS, addSite, isBuiltIn, isCustomSite, originPattern, removeSite } from "../lib/sites.js";
+import { addSite, getCustomSite, injectNow, isBuiltIn, originPattern, removeSite } from "../lib/sites.js";
 
 const $ = (id) => document.getElementById(id);
 
 const SOURCES = {
   player: "read from the player",
-  "media controls": "read from the browser's media controls",
   "page data": "read from the page's info",
-  "tab title": "read from the tab title (less reliable)",
+  "player software": "read from the video player's settings",
+  "media controls": "read from the browser's media controls",
+  "tab title": "read from the tab title",
+  "player overlay": "read from the text on the player",
+  "app data": "read from the page's app data",
+  "video label": "read from the video's label",
+  "web address": "read from the web address",
+  "page heading": "read from the page heading",
+  you: "picked by you",
 };
+
+let fixOpened = false; // the panel keeps what you typed while the popup refreshes
 
 let siteState = { kind: "none" }; // none | builtin | custom | untracked
 
@@ -39,6 +48,7 @@ async function render() {
   $("service").textContent = info ? serviceName : "This tab";
   $("progressBox").hidden = true;
   $("markNow").hidden = true;
+  $("openFix").hidden = true;
   $("matched").textContent = "";
   $("message").textContent = "";
 
@@ -61,10 +71,9 @@ async function render() {
   } else if (info.noMedia || !s) {
     $("state").textContent = "Can't read title";
     $("state").className = "pill warn";
-    $("label").textContent = "A video is playing, but its title isn't readable.";
-    $("message").textContent =
-      "Move your mouse over the video so the player shows the title, and wait a few seconds. " +
-      "If it keeps happening, the site may have changed; please report it on GitHub.";
+    $("label").textContent = "A video is playing, but the extension can't tell what it is.";
+    $("message").textContent = "Tell it below: search Bingers and pick the right one. It's remembered next time.";
+    openFix(st);
   } else {
     const [text, cls] = STATES[s.state] || [s.state, ""];
     $("state").textContent = text;
@@ -76,7 +85,7 @@ async function render() {
     } else if (how) {
       $("matched").textContent = how.slice(3);
     }
-    $("message").textContent = s.message || "";
+    $("message").textContent = [s.message, s.state === "tracking" ? s.note : ""].filter(Boolean).join(" ");
     if (s.state === "tracking" || s.state === "matching") {
       $("progressBox").hidden = false;
       $("bar").style.width = `${Math.min(100, s.progress)}%`;
@@ -85,10 +94,13 @@ async function render() {
       $("watchedText").textContent = `watched ${minutes(s.watchedSeconds)} / ${minutes(st.needed)}`;
     }
     $("markNow").hidden = !(s.match && (s.state === "tracking" || s.state === "error"));
+    if (s.state === "unmatched") openFix(st);
+    else $("openFix").hidden = fixOpened;
   }
 
   $("backlog").hidden = !st.backlog;
   $("backlog").textContent = `${st.backlog} saved mark(s) waiting to be sent.`;
+  lastState = st;
   return tab;
 }
 
@@ -107,22 +119,41 @@ async function setupSiteCard(tab) {
     siteState = { kind: "builtin", origin };
     return;
   }
-  if (await isCustomSite(origin)) {
-    siteState = { kind: "custom", origin };
+
+  // Look for the video player: it may sit in a frame from another domain, which needs access too.
+  const frameOrigins = await scanPlayerFrames(tab.id);
+  const site = await getCustomSite(origin);
+  if (site) {
+    siteState = { kind: "custom", origin, tabId: tab.id };
     $("siteAdded").hidden = false;
+    // A player from a domain we don't have access to yet (the site may have changed players).
+    const missing = [];
+    for (const o of frameOrigins) {
+      if (!(await chrome.permissions.contains({ origins: [originPattern(o)] }))) missing.push(o);
+    }
+    if (missing.length) {
+      siteState.missing = missing;
+      $("playerHosts").textContent = missing.map((o) => new URL(o).hostname).join(", ");
+      $("playerCard").hidden = false;
+    }
     return;
   }
 
-  // Look for the video player: it may sit in a frame from another domain, which needs access too.
-  let frameOrigins = [];
+  siteState = { kind: "untracked", origin, frameOrigins, tabId: tab.id };
+  $("siteName").textContent = url.hostname.replace(/^www\./, "");
+  $("siteCard").hidden = false;
+}
+
+/** Domains of player-sized frames on the page (not ads or trackers). */
+async function scanPlayerFrames(tabId) {
   try {
     const [res] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
+      target: { tabId },
       func: () =>
         [...document.querySelectorAll("iframe")]
           .filter((f) => {
             const r = f.getBoundingClientRect();
-            return r.width >= 300 && r.height >= 150; // player-sized, not ads or trackers
+            return r.width >= 300 && r.height >= 150;
           })
           .map((f) => {
             try {
@@ -133,14 +164,10 @@ async function setupSiteCard(tab) {
           })
           .filter((o) => o && /^https?:/.test(o) && o !== location.origin),
     });
-    frameOrigins = [...new Set(res?.result || [])].slice(0, 3);
+    return [...new Set(res?.result || [])].slice(0, 3);
   } catch {
-    // Some pages (e.g. the browser's own) can't be scripted; the button still works for the page itself.
+    return []; // pages like the browser's own can't be scripted
   }
-
-  siteState = { kind: "untracked", origin, frameOrigins, tabId: tab.id };
-  $("siteName").textContent = url.hostname.replace(/^www\./, "");
-  $("siteCard").hidden = false;
 }
 
 $("trackSite").addEventListener("click", async () => {
@@ -153,16 +180,37 @@ $("trackSite").addEventListener("click", async () => {
     return;
   }
   await addSite(origin, frameOrigins);
-  try {
-    await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, files: UNIVERSAL_SCRIPTS });
-  } catch {
-    // Fine: the scripts run on the next page load anyway.
-  }
-  siteState = { kind: "custom", origin };
+  await injectNow(tabId);
+  siteState = { kind: "custom", origin, tabId };
   $("siteCard").hidden = true;
   $("siteAdded").hidden = false;
   $("message").textContent =
     "Turned on. Play the video; if nothing shows up within 10 seconds, reload the page.";
+});
+
+$("allowPlayer").addEventListener("click", async () => {
+  const { origin, missing, tabId } = siteState;
+  const granted = await chrome.permissions.request({ origins: missing.map(originPattern) });
+  if (!granted) return;
+  await addSite(origin, missing);
+  await injectNow(tabId);
+  $("playerCard").hidden = true;
+  $("message").textContent = "Player allowed. If nothing shows up within 10 seconds, reload the page.";
+});
+
+$("copyDetails").addEventListener("click", async (e) => {
+  e.preventDefault();
+  const st = lastState || {};
+  const details = {
+    extension: chrome.runtime.getManifest().version,
+    browser: navigator.userAgent.replace(/^.*?(Chrome|Edg|Firefox)\//, "$1/"),
+    site: st.info?.site,
+    state: st.session ? { state: st.session.state, message: st.session.message, media: st.session.media } : "can't read title",
+    pageSays: st.info?.hint,
+    sources: st.info?.diag || "not collected yet (keep the video playing for 30 seconds)",
+  };
+  await navigator.clipboard.writeText("```json\n" + JSON.stringify(details, null, 2) + "\n```");
+  $("fixMessage").textContent = "Details copied. Paste them into the bug report.";
 });
 
 $("untrackSite").addEventListener("click", async (e) => {
@@ -170,6 +218,89 @@ $("untrackSite").addEventListener("click", async (e) => {
   await removeSite(siteState.origin);
   $("siteAdded").hidden = true;
   $("message").textContent = "Stopped tracking this site.";
+});
+
+// -- "Fix it": search Bingers and pick the right title ---------------------------------
+
+let lastState = null;
+
+/** Show the panel, pre-filled from what was detected (or the page's raw text), once. */
+function openFix(st) {
+  lastState = st;
+  if (fixOpened) return;
+  fixOpened = true;
+  $("fixCard").hidden = false;
+  $("openFix").hidden = true;
+
+  const media = st.session?.media;
+  const hint = st.info?.hint || "";
+  // Make the most of the page's raw text, e.g. a file name, even if it wasn't confident.
+  const guess = !media && hint ? globalThis.BSParse?.parseMediaText(hint, { site: st.info?.site, strong: true }) : null;
+  const from = media || guess;
+  $("fixQuery").value = from?.title || hint;
+  $("fixSeason").value = from?.season ?? "";
+  $("fixEpisode").value = from?.episode ?? "";
+  $("fixHint").textContent = hint ? `The page says: "${hint}"` : "";
+  if ($("fixQuery").value) search();
+  else $("fixQuery").focus();
+}
+
+async function search() {
+  const query = $("fixQuery").value.trim();
+  $("fixMessage").textContent = "Searching Bingers…";
+  $("fixResults").replaceChildren();
+  const res = await chrome.runtime.sendMessage({ type: "searchTitles", query });
+  if (res?.error) {
+    $("fixMessage").textContent = res.error;
+    return;
+  }
+  if (!res.items.length) {
+    $("fixMessage").textContent = "No results. Try a shorter or different name.";
+    return;
+  }
+  $("fixMessage").textContent = "Tap the right one:";
+  $("fixResults").replaceChildren(
+    ...res.items.map((item) => {
+      const b = document.createElement("button");
+      b.className = "result";
+      const name = document.createElement("span");
+      name.textContent = item.title;
+      const meta = document.createElement("small");
+      meta.textContent = `${item.kind === "show" ? "Show" : "Movie"}${item.year ? ` · ${item.year}` : ""}`;
+      b.append(name, meta);
+      b.addEventListener("click", () => choose(item));
+      return b;
+    })
+  );
+}
+
+async function choose(item) {
+  const res = await chrome.runtime.sendMessage({
+    type: "chooseTitle",
+    tabId: currentTab?.id,
+    candidate: item,
+    season: $("fixSeason").value,
+    episode: $("fixEpisode").value,
+  });
+  if (res?.error) {
+    $("fixMessage").textContent = res.error;
+    if (res.error.includes("episode")) $("fixEpisode").focus();
+    return;
+  }
+  $("fixCard").hidden = true;
+  fixOpened = false;
+  currentTab = await render();
+  $("message").textContent = `Got it: tracking ${res.label}. Next time this name shows up, it's matched automatically.`;
+}
+
+$("fixSearch").addEventListener("click", search);
+$("fixQuery").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") search();
+});
+$("openFix").addEventListener("click", (e) => {
+  e.preventDefault();
+  fixOpened = false;
+  openFix(lastState || {});
 });
 
 let currentTab;

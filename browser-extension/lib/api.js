@@ -63,6 +63,13 @@ export async function search(token, query, kind, f) {
   return data.items || [];
 }
 
+/** A show's episodes: [{ id, season, number, title, aired_at }]. */
+export async function episodes(token, ref, season, f) {
+  const params = Number.isInteger(season) ? { season } : {};
+  const data = await request(token, "GET", `/titles/${encodeURIComponent(ref)}/episodes`, { params }, f);
+  return Array.isArray(data.items) ? data.items : [];
+}
+
 export async function scrobble(token, items, dryRun = false, f) {
   const body = { items };
   if (dryRun) body.dry_run = true;

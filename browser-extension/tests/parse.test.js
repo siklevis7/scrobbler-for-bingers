@@ -89,6 +89,87 @@ test("tab title: only trusted with an episode number or a film year", () => {
   assert.equal(P.parseDocumentTitle("My cat video", "videos.example"), null);
 });
 
+test("real-world titles: file names, 'Watch …' titles, many formats", () => {
+  const ep = (title, season, episode) => ({ title, season, episode });
+  const cases = [
+    ["Most_Dangerous_Game_S02E11_720p_10bit_WEBRip_2CH_x265_HEVC_PSA.mkv", "", ep("Most Dangerous Game", 2, 11)],
+    ["Watch Ozark Season 2 Episode 3", "", ep("Ozark", 2, 3)],
+    ["Watch Ozark Season 2 Episode 3 Online Free | FlixHQ", "flixhq.to", ep("Ozark", 2, 3)],
+    ["Ozark: Season 2, Episode 3 - Netflix", "www.netflix.com", ep("Ozark", 2, 3)],
+    ["The.Bear.S02E03.1080p.WEB.h264-ETHEL.mkv", "", ep("The Bear", 2, 3)],
+    ["Severance 1x04 The You You Are", "", ep("Severance", 1, 4)],
+    ["Play Dates S01E01", "", ep("Play Dates", 1, 1)],
+    ["You're watching: Shogun S1 E2 · Servants of Two Masters", "", ep("Shogun", 1, 2)],
+    ["[SubsPlease] Frieren - 12 (1080p) [A1B2C3D4].mkv", "", ep("Frieren", null, 12)],
+    ["House.of.the.Dragon.S02.E05.Regent.2160p.mkv", "", ep("House of the Dragon", 2, 5)],
+  ];
+  for (const [text, site, want] of cases) {
+    const got = P.parseMediaText(text, { site });
+    assert.ok(got, `nothing parsed from ${text}`);
+    assert.deepEqual({ title: got.title, season: got.season, episode: got.episode }, want, text);
+  }
+  assert.equal(P.parseMediaText("Severance 1x04 The You You Are").episodeTitle, "The You You Are");
+  assert.equal(P.parseMediaText("House.of.the.Dragon.S02.E05.Regent.2160p.mkv").episodeTitle, "Regent");
+});
+
+test("real-world movie titles", () => {
+  assert.deepEqual(P.parseMediaText("Dune.Part.Two.2024.2160p.WEB-DL.DDP5.1.mkv"), { title: "Dune Part Two", year: 2024 });
+  assert.deepEqual(P.parseMediaText("Blade Runner 2049 (2017) - MovieBox", { site: "moviebox.example" }), {
+    title: "Blade Runner 2049",
+    year: 2017,
+  });
+  assert.deepEqual(P.parseMediaText("Charlotte's Web (1973)"), { title: "Charlotte's Web", year: 1973 });
+  // A bare name is only trusted from sources that are clearly about the video.
+  assert.equal(P.parseMediaText("Oppenheimer"), null);
+  assert.deepEqual(P.parseMediaText("Oppenheimer", { strong: true }), { title: "Oppenheimer" });
+  assert.equal(P.parseMediaText("Netflix"), null);
+});
+
+test("other languages, number words, Part seasons, years", () => {
+  const ep = (text) => {
+    const r = P.parseMediaText(text);
+    return r && [r.title, r.season, r.episode];
+  };
+  assert.deepEqual(ep("Lupin Saison 2 Épisode 3"), ["Lupin", 2, 3]);
+  assert.deepEqual(ep("La casa de papel Temporada 2 Episodio 3"), ["La casa de papel", 2, 3]);
+  assert.deepEqual(ep("Dark Staffel 3 Folge 8"), ["Dark", 3, 8]);
+  assert.deepEqual(ep("Kuruluş Osman Sezon 2 Bölüm 3"), ["Kuruluş Osman", 2, 3]);
+  assert.deepEqual(ep("Слово пацана 1 сезон 3 серия"), ["Слово пацана", 1, 3]);
+  assert.deepEqual(ep("三体 第1季 第5集"), ["三体", 1, 5]);
+  assert.deepEqual(ep("Stranger Things Chapter Three"), ["Stranger Things", null, 3]);
+  assert.deepEqual(ep("Money Heist: Part 3: Episode 2"), ["Money Heist", 3, 2]);
+  assert.deepEqual(ep("Money Heist P3:E2"), ["Money Heist", 3, 2]);
+  assert.deepEqual(ep("Season One Episode Two"), null); // no show name: nothing to search for
+  assert.equal(P.parseMediaText("Doctor Who (2005) S01E01").year, 2005);
+  assert.equal(P.parseMediaText("Doctor Who (2005) S01E01").title, "Doctor Who");
+  assert.deepEqual(P.parseMediaText("Dune: Part Two (2024)"), { title: "Dune: Part Two", year: 2024 });
+  assert.equal(P.parseSeason("Season 4"), 4);
+  assert.equal(P.parseSeason("Specials"), null);
+});
+
+test("embedded app data (Next.js, Plex, Jellyfin)", () => {
+  const plex = JSON.stringify({ MediaContainer: { Metadata: [{ ratingKey: "4821", grandparentTitle: "Ozark", parentIndex: 2, index: 3, title: "Kaleidoscope" }] } });
+  assert.deepEqual(P.parseAppData([plex], "https://app.plex.tv/desktop/#!/server/x/details?key=%2Flibrary%2Fmetadata%2F4821"), {
+    title: "Ozark",
+    season: 2,
+    episode: 3,
+    episodeTitle: "Kaleidoscope",
+  });
+  const jellyfin = JSON.stringify({ Id: "ab12cd", SeriesName: "Severance", ParentIndexNumber: 1, IndexNumber: 4, Name: "The You You Are" });
+  assert.equal(P.parseAppData([jellyfin]).episode, 4);
+  // A season list with many episodes and nothing tying one to the address: don't guess.
+  const list = JSON.stringify({ props: { episodes: [1, 2, 3].map((n) => ({ id: `ep${n}x`, seriesTitle: "Dark", seasonNumber: 1, episodeNumber: n })) } });
+  assert.equal(P.parseAppData([list], "https://site.example/browse"), null);
+  assert.equal(P.parseAppData([list], "https://site.example/watch/ep2x").episode, 2);
+});
+
+test("web addresses", () => {
+  assert.deepEqual(P.parseUrl("/watch/ozark-season-2-episode-3"), { title: "Ozark", season: 2, episode: 3, episodeTitle: "" });
+  assert.equal(P.parseUrl("/tv/the-bear/s02e03").title, "The Bear");
+  assert.equal(P.parseUrl("/en/movie/heat-1995/8f3k2j9x1q").title, "Heat");
+  assert.equal(P.parseUrl("/watch/80117552"), null);
+});
+
 test("media session fallback", () => {
   const set = (md) => {
     // Node has its own read-only navigator; replace it for this test.
@@ -105,6 +186,15 @@ test("media session fallback", () => {
 
   set({ title: "Oppenheimer", artist: "", album: "" });
   assert.deepEqual(P.fromMediaSession(), { title: "Oppenheimer" });
+
+  // Telegram and similar: the file name is the title
+  set({ title: "Most_Dangerous_Game_S02E11_720p_10bit_WEBRip_2CH_x265_HEVC_PSA.mkv", artist: "", album: "" });
+  assert.deepEqual(P.fromMediaSession(), { title: "Most Dangerous Game", season: 2, episode: 11, episodeTitle: "" });
+
+  // An episode name with the show in "artist" and no numbers (Jellyfin, Plex): never a movie;
+  // the background looks the episode up on Bingers by its name.
+  set({ title: "Trouble the Water", artist: "Ozark", album: "Season 4" });
+  assert.deepEqual(P.fromMediaSession(), { title: "Ozark", episodeTitle: "Trouble the Water", season: 4, episode: null, lookup: true });
 
   set(null);
   assert.equal(P.fromMediaSession(), null);

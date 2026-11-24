@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bingers Scrobbler",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Marks what you watch on Netflix, Prime Video, Disney+, Max or any site you add as watched on Bingers. Unofficial.",
   "homepage_url": "https://github.com/siklevis7/scrobbler-for-bingers",
   "icons": {
@@ -50,16 +50,19 @@
         "https://www.amazon.nl/*"
       ],
       "js": ["content/parse.js", "content/common.js", "content/sites/prime.js"],
+      "all_frames": true,
       "run_at": "document_idle"
     },
     {
       "matches": ["https://www.disneyplus.com/*"],
       "js": ["content/parse.js", "content/common.js", "content/sites/disney.js"],
+      "all_frames": true,
       "run_at": "document_idle"
     },
     {
       "matches": ["https://play.max.com/*", "https://play.hbomax.com/*"],
       "js": ["content/parse.js", "content/common.js", "content/sites/max.js"],
+      "all_frames": true,
       "run_at": "document_idle"
     },
     {
@@ -70,6 +73,19 @@
         "https://www.peacocktv.com/*"
       ],
       "js": ["content/parse.js", "content/common.js", "content/sites/generic.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://tv.apple.com/*",
+        "https://www.hulu.com/*",
+        "https://www.paramountplus.com/*",
+        "https://www.peacocktv.com/*"
+      ],
+      "js": ["content/page-probe.js"],
+      "all_frames": true,
+      "world": "MAIN",
       "run_at": "document_idle"
     }
   ]
