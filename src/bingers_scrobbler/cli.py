@@ -1,4 +1,4 @@
-"""Command line: login, run, match, status."""
+"""Command line: login, run, match, status, tray."""
 
 from __future__ import annotations
 
@@ -6,44 +6,20 @@ import argparse
 import getpass
 import logging
 import sys
-from logging.handlers import RotatingFileHandler
 
 from . import __version__
 from .api import AuthError, BingersClient, BingersError, TransientError, describe_result
+from .api import display_name as _who
 from .backlog import Backlog
 from .config import app_dir, config_path, load_config, load_token, save_token
+from .history import History
+from .logs import setup_logging
 from .matcher import Matcher
 from .parser import parse_filename
 from .players import build_players
 from .tracker import Tracker, build_items
 
 log = logging.getLogger("bingers_scrobbler")
-
-
-def setup_logging(verbose: bool) -> None:
-    logs = app_dir() / "logs"
-    logs.mkdir(exist_ok=True)
-    fmt = logging.Formatter("%(asctime)s %(levelname)-7s %(message)s", "%Y-%m-%d %H:%M:%S")
-    console = logging.StreamHandler(sys.stdout)
-    console.setFormatter(fmt)
-    file = RotatingFileHandler(logs / "scrobbler.log", maxBytes=2_000_000, backupCount=3, encoding="utf-8")
-    file.setFormatter(fmt)
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG if verbose else logging.INFO)
-    root.addHandler(console)
-    root.addHandler(file)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("rebulk").setLevel(logging.WARNING)
-
-
-def _who(me: dict) -> str:
-    """Display name from GET /me, which nests the profile under "user"."""
-    user = me.get("user") or {}
-    handle = user.get("handle")
-    name = user.get("name")
-    if name and handle:
-        return f"{name} (@{handle})"
-    return name or (f"@{handle}" if handle else "your account")
 
 
 def _client_or_exit() -> BingersClient:
@@ -103,6 +79,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
         Matcher(client, data / "match_cache.json", config.overrides),
         Backlog(data / "backlog.json"),
         config.scrobble,
+        history=History(data / "history.jsonl"),
     )
     log.info(
         "Watching %s. Marks watched at %.0f%%. Press Ctrl+C to stop.",
@@ -157,6 +134,12 @@ def cmd_status(_args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_tray(args: argparse.Namespace) -> int:
+    from .tray import main as tray_main
+
+    return tray_main(["--verbose"] if args.verbose else [])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="bingers-scrobbler", description="Scrobble local playback to Bingers.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -168,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     match.add_argument("filename")
     match.set_defaults(func=cmd_match)
     sub.add_parser("status", help="show settings, token, backlog and player status").set_defaults(func=cmd_status)
+    sub.add_parser("tray", help="run as a tray icon (the normal way on Windows)").set_defaults(func=cmd_tray)
 
     args = parser.parse_args(argv)
     if args.command == "run":

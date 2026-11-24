@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import tomllib
 from dataclasses import dataclass, field, fields
@@ -40,6 +41,10 @@ def default_mpv_ipc_path() -> str:
 
 DEFAULT_CONFIG = """\
 # Bingers Scrobbler settings
+
+[app]
+# Show a Windows notification when something is marked watched.
+notifications = true
 
 [scrobble]
 # How far into a file (percent) you must get before it counts as watched.
@@ -72,6 +77,11 @@ ipc_path = '{mpv_ipc}'
 
 
 @dataclass
+class AppSettings:
+    notifications: bool = True
+
+
+@dataclass
 class ScrobbleSettings:
     threshold: float = 80.0
     min_watched_seconds: float = 300.0
@@ -94,6 +104,7 @@ class MpvSettings:
 
 @dataclass
 class Config:
+    app: AppSettings = field(default_factory=AppSettings)
     scrobble: ScrobbleSettings = field(default_factory=ScrobbleSettings)
     vlc: VlcSettings = field(default_factory=VlcSettings)
     mpv: MpvSettings = field(default_factory=MpvSettings)
@@ -119,6 +130,7 @@ def load_config(path: Path | None = None) -> Config:
 
     players = raw.get("players", {})
     cfg = Config(
+        app=_build(AppSettings, raw.get("app", {})),
         scrobble=_build(ScrobbleSettings, raw.get("scrobble", {})),
         vlc=_build(VlcSettings, players.get("vlc", {})),
         mpv=_build(MpvSettings, players.get("mpv", {})),
@@ -129,6 +141,52 @@ def load_config(path: Path | None = None) -> Config:
     cfg.scrobble.min_watched_seconds = max(0.0, float(cfg.scrobble.min_watched_seconds))
     cfg.scrobble.poll_interval = max(1.0, float(cfg.scrobble.poll_interval))
     return cfg
+
+
+def _toml_value(value: object) -> str:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return repr(value)
+    return json.dumps(str(value), ensure_ascii=False)  # a valid TOML basic string
+
+
+def set_value(section: str, key: str, value: object, path: Path | None = None) -> None:
+    """Change one setting in config.toml, keeping the user's comments and layout."""
+    path = path or config_path()
+    if not path.exists():
+        load_config(path)
+    lines = path.read_text(encoding="utf-8").splitlines()
+    new_line = f"{key} = {_toml_value(value)}"
+    header = f"[{section}]"
+
+    start = next((i for i, line in enumerate(lines) if line.strip() == header), None)
+    if start is None:
+        if lines and lines[-1].strip():
+            lines.append("")
+        lines += [header, new_line]
+    else:
+        end = next(
+            (i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")),
+            len(lines),
+        )
+        key_re = re.compile(rf"^\s*{re.escape(key)}\s*=")
+        hit = next((i for i in range(start + 1, end) if key_re.match(lines[i])), None)
+        if hit is not None:
+            lines[hit] = new_line
+        else:
+            lines.insert(start + 1, new_line)
+
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def delete_token() -> None:
+    try:
+        credentials_path().unlink()
+    except FileNotFoundError:
+        pass
 
 
 def credentials_path() -> Path:

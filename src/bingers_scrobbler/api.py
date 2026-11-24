@@ -123,6 +123,16 @@ def _error_details(resp: requests.Response) -> tuple[str, str | None]:
         return f"HTTP {resp.status_code}", None
 
 
+def display_name(me: dict[str, Any]) -> str:
+    """Readable account name from GET /me, which nests the profile under "user"."""
+    user = me.get("user") or {}
+    handle = user.get("handle")
+    name = user.get("name")
+    if name and handle:
+        return f"{name} (@{handle})"
+    return name or (f"@{handle}" if handle else "your account")
+
+
 def describe_result(result: dict[str, Any]) -> str:
     """One readable line for an ActionResult from POST /scrobble."""
     title = (result.get("title") or {}).get("title") or "?"
