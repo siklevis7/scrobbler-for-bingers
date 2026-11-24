@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bingers-scrobbler"
+version = "0.1.0"
+description = "Automatically mark what you watch in local media players as watched on Bingers."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "guessit>=3.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+bingers-scrobbler = "bingers_scrobbler.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
