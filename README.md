@@ -112,3 +112,8 @@ tests/            pytest suite (no network or players needed)
 - OAuth device-code login so other people can use it without a personal token
 - More players: MPC-HC/MPC-BE (web interface), PotPlayer, and window-title fallback
 - Anime absolute numbering, through `/titles/{ref}/episodes`
+
+## License
+
+[GPL-3.0](LICENSE). You're free to use, change and share this code. If you distribute a
+changed version, it has to stay open source under the same license.
