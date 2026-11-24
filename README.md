@@ -11,54 +11,179 @@ episode watched once you're past 80%.
 > [Media-Player-Scrobbler-for-Simkl](https://github.com/ByteTrix/Media-Player-Scrobbler-for-Simkl).
 > The code here is written from scratch.
 
-## What you need
+## Before you start
 
-- Windows 10 or 11
-- A Bingers **Legend** or **Icon** plan. The Bingers API is only available on those plans.
-  Subscribe in the Bingers app: Profile > Settings > Support Bingers.
-- VLC (or mpv)
+You need three things:
 
-## Install
+1. **A Windows 10 or Windows 11 computer.**
+2. **A Bingers Legend or Icon plan.** The app talks to Bingers through its API, and Bingers
+   only allows that on these two plans. To subscribe, open the Bingers app on your phone and go
+   to **Profile > Settings > Support Bingers**.
+3. **VLC media player.** If you don't have it, download it free from
+   [videolan.org](https://www.videolan.org/vlc/) and install it. mpv also works; see
+   [Using mpv instead of VLC](#using-mpv-instead-of-vlc-optional).
 
-1. Go to the [latest release](https://github.com/siklevis7/scrobbler-for-bingers/releases/latest).
-2. Under **Assets**, download `BingersScrobbler_Setup_<version>.exe`.
-3. Run it. Windows may show "Windows protected your PC" because the app isn't signed: click
-   **More info**, then **Run anyway**.
-4. Leave **Start Bingers Scrobbler when I sign in to Windows** ticked, and finish the installer.
+The whole setup takes about 10 minutes. You only do it once.
 
-No admin rights are needed. If you'd rather not install anything, download
-`BingersScrobbler_Portable_<version>.zip`, unzip it, and run `BingersScrobbler.exe`.
+## Installation guide
+
+### Step 1: Download the installer
+
+1. Open this page:
+   **<https://github.com/siklevis7/scrobbler-for-bingers/releases/latest>**
+2. Scroll down to the section called **Assets**. If you only see a few files, click
+   **Show all assets**.
+3. Click the file whose name starts with **`BingersScrobbler_Setup_`** and ends with **`.exe`**,
+   for example `BingersScrobbler_Setup_0.2.0.exe`. The download starts.
+4. Your browser may warn that the file "isn't commonly downloaded". That's normal for small
+   apps. To keep the file:
+   - **Microsoft Edge:** in the downloads list, hover over the file, click the **…** (three
+     dots), click **Keep**, then **Show more**, then **Keep anyway**.
+   - **Google Chrome:** in the downloads list, click **Keep**, or **Download insecure file**.
+
+### Step 2: Run the installer
+
+1. Open your **Downloads** folder. Press **Windows key + E** to open File Explorer, then click
+   **Downloads** on the left.
+2. Double-click **`BingersScrobbler_Setup_0.2.0.exe`**. The version number may differ.
+3. A blue window may say **"Windows protected your PC"**. This appears because the app isn't
+   code-signed, which costs money every year. The app is open source: anyone can read its
+   code on this page. To continue:
+   1. Click the small **More info** text.
+   2. Click the **Run anyway** button that appears.
+4. The installer opens. Go through its pages:
+   1. **License Agreement:** select **I accept the agreement**, then click **Next**.
+   2. **Select Destination Location:** leave it as it is, and click **Next**.
+   3. **Select Additional Tasks:** leave **Start Bingers Scrobbler when I sign in to Windows**
+      ticked, so it always runs in the background without you having to open it. Tick
+      **Create a desktop shortcut** if you want one. Click **Next**.
+   4. **Ready to Install:** click **Install**.
+   5. **Completing the setup:** leave **Start Bingers Scrobbler now** ticked, and click
+      **Finish**.
+
+The installer doesn't ask for an administrator password. It installs only for your Windows user.
+
+### Step 3: Find the app by the clock
+
+Bingers Scrobbler has no main window. It lives as a small icon in the **system tray**: the
+corner of the taskbar next to the clock, at the bottom right of your screen. The icon is a
+white play button with a check mark, on a purple-to-orange square.
+
+1. Look at the icons next to the clock.
+2. If you don't see it, click the small **^** arrow next to those icons. Hidden icons
+   appear in a small pop-up.
+3. Optional, to always see it: drag the icon from that pop-up down onto the taskbar, next to
+   the clock.
+
+- **Right-click** the icon to open its menu.
+- **Hover** over it to see what it's doing, for example "Running" or "Watching Ozark S04E12".
 
 ## Set up
 
-When the app starts for the first time, it walks you through the following.
+The first time the app starts, it opens a **Welcome** window and walks you through the
+following steps. Click **OK** on the Welcome window to begin.
 
-### 1. Sign in to Bingers
+### Step 4: Create your Bingers token
 
-1. Click **Open token page**. It opens <https://bingers.app/integrations>.
-2. Sign in, go to **Personal tokens**, click **Create**, and choose **read + write**.
-3. Copy the token (it starts with `bng_pat_`), paste it into the app, and click **OK**.
+A token is a long secret code. It lets the app mark episodes on your Bingers account without
+knowing your password.
 
-Treat the token like a password. The app stores it in `%APPDATA%\bingers-scrobbler\credentials.json`.
+1. In the **Sign in** window, click the **Open token page** button. Your browser opens
+   <https://bingers.app/integrations>. Leave the Sign in window open.
+2. Sign in to Bingers in the browser if it asks.
+3. Find the **Personal tokens** section, and click **Create**.
+4. When it asks what the token may do, choose **read + write**. A read-only token can't
+   mark anything as watched.
+5. Bingers shows your new token. It starts with **`bng_pat_`**. Click the copy button next to
+   it, or select all of it and press **Ctrl + C**.
 
-### 2. Let the app see VLC
+> **Keep your token secret.** Anyone who has it can change your Bingers library. Don't
+> share it, post it, or send it in a message. If it ever leaks, delete it on the same page and
+> create a new one.
 
-1. In VLC, open **Tools > Preferences**.
-2. Bottom left, under **Show settings**, click **All**.
-3. Click **Interface > Main interfaces**, and tick **Web**.
-4. Expand **Main interfaces**, click **Lua**, and type a password under **Lua HTTP**.
-   Make up a new one; it only protects VLC's web interface.
-5. Click **Save**, then close and reopen VLC.
-6. Type the same password into the app. Later you can change it from the tray icon:
-   **Players > Set VLC Password...**
+### Step 5: Sign in to the app
 
-### 3. mpv (optional)
+1. Go back to the app's **Sign in** window. If it's hidden behind your browser, click it on
+   the taskbar.
+2. Click inside the text box, and press **Ctrl + V** to paste the token. It shows as dots,
+   which is normal. Tick **Show** if you want to check it.
+3. Click **OK**.
+4. A message says **"Signed in as"** followed by your Bingers name. Click **OK**.
 
-Add this line to `%APPDATA%\mpv\mpv.conf`:
+If it says **"Bingers refused that token"**, check two things:
+- the token was created with **read + write**, and
+- your Bingers account has the **Legend** or **Icon** plan.
 
-```
-input-ipc-server=\\.\pipe\mpv-pipe
-```
+Then paste the token again.
+
+### Step 6: Turn on VLC's web interface
+
+The app reads what VLC is playing through a small web interface that's built into VLC. It's
+switched off by default, so you turn it on once:
+
+1. Open **VLC**.
+2. In the menu bar at the top, click **Tools**, then **Preferences**.
+3. At the **bottom left** of the Preferences window, under **Show settings**, click **All**.
+   The window changes to a long list of settings on the left.
+4. In that list, find **Interface** near the top. Click the small arrow next to it to
+   expand it.
+5. Click the words **Main interfaces** (just under Interface).
+6. On the right side, tick the box next to **Web**. Don't change anything else.
+7. On the left, click the small arrow next to **Main interfaces** to expand it, then click
+   **Lua**.
+8. On the right, find **Lua HTTP**, and type a password in the **Password** box.
+   - Make up a new, simple password, for example `bingers123`.
+   - Don't use a real password from another account. This one only protects VLC's web
+     interface on your own computer.
+9. Click **Save** at the bottom right.
+10. **Close VLC completely, then open it again.** The change only takes effect after a restart.
+    If Windows then asks whether VLC may use the network, click **Allow** or **Cancel**.
+    Either way works, because the app connects from your own computer.
+
+### Step 7: Give the app your VLC password
+
+1. Go back to the app's **VLC password** window. It opens by itself after you sign in, and
+   repeats these VLC steps.
+2. Type the **same password** you set in VLC in step 6.
+3. Click **OK**.
+   - If a video is playing in VLC, you'll see **"Connected to VLC"** with the file name.
+   - Otherwise you'll see **"Password saved"**. That's fine too.
+
+To change the password later: right-click the tray icon, then **Players > Set VLC Password...**
+
+### Step 8: Start with Windows
+
+If you unticked the start-with-Windows option in the installer, the app now asks
+**"Start Bingers Scrobbler automatically when you sign in to Windows?"**:
+- **Yes** (recommended): it runs every time you turn on your computer.
+- **No:** you open it yourself from the Start menu whenever you want to scrobble.
+
+You can change this any time: right-click the tray icon, then **Settings > Start with Windows**.
+
+### Step 9: Check that it works
+
+1. Open an episode of a show in VLC. The file name should include the show name and the
+   episode number, for example `Ozark.S04E12.mkv` or `The Office - 2x03.mp4`.
+2. After a few seconds, hover over the tray icon. It should say
+   **"Watching Ozark S04E12"** (with your show and episode).
+3. Watch until you're past **80%** of the episode. The app also needs at least **5 minutes**
+   of real playback, so skipping straight to the end doesn't count.
+4. A notification pops up: **"Ozark S04E12 marked watched"**.
+5. Open Bingers. The episode is ticked.
+
+**You're done.** From now on, just watch in VLC as usual, and your episodes get marked by
+themselves.
+
+### Using mpv instead of VLC (optional)
+
+1. Open File Explorer, click the address bar at the top, type `%APPDATA%\mpv`, and press
+   **Enter**. If the folder doesn't exist, create a folder named `mpv` inside `%APPDATA%`.
+2. Open the file **`mpv.conf`** with Notepad. Create it if it isn't there.
+3. Add this line on its own, then save the file:
+   ```
+   input-ipc-server=\\.\pipe\mpv-pipe
+   ```
+4. Close mpv completely and open it again.
 
 ## Using it
 
@@ -101,6 +226,65 @@ Right-click the tray icon > **Settings > Open Settings File**, and pin the title
 The key is the title as it appears in the file name. The value can be `tvdb:…`, `imdb:…`,
 `tmdb:show:…` / `tmdb:movie:…`, or a Bingers id. Then restart the app: right-click >
 **Exit**, and open it again from the Start menu.
+
+## Troubleshooting
+
+**I can't find the tray icon.**
+Click the **^** arrow next to the clock. If it isn't there either, open the Start menu, type
+**Bingers Scrobbler**, and press **Enter**.
+
+**The status says "Running", but it never says "Watching …" while VLC plays.**
+The app can't see VLC. Check that:
+1. **Web** is ticked in VLC (step 6), and you **closed and reopened VLC** afterwards.
+2. The password in VLC and the one in the app are exactly the same. To retype it: right-click
+   the tray icon, then **Players > Set VLC Password...**
+3. **VLC** is ticked under **Players** in the tray menu.
+
+**It says "Watching …" but never marks the episode.**
+Keep watching until you're past 80%, with at least 5 minutes of real playback. Paused time and
+skipping ahead don't count. If you only need part of an episode to count, lower the
+percentage: right-click the tray icon, then **Scrobbling > Completion Threshold**.
+
+**I got a notification saying it couldn't find a show on Bingers.**
+The file name is unusual, or the show has a different name on Bingers. See
+[When it picks the wrong show](#when-it-picks-the-wrong-show).
+
+**The status says "Token refused - sign in again".**
+The token was deleted, or your plan ended. Create a new token (step 4), then right-click the
+tray icon, and choose **Bingers > Change Token...**
+
+**I was offline while watching.**
+Nothing is lost. The mark is saved and sent automatically when you're back online. To send it
+right away: right-click the tray icon, then **Scrobbling > Sync Backlog Now**.
+
+**Something else went wrong.**
+Right-click the tray icon, then **Settings > Open Logs Folder**, and open `scrobbler.log`. It
+shows what the app did, step by step. You can also
+[open an issue](https://github.com/siklevis7/scrobbler-for-bingers/issues). Never paste your
+token there.
+
+## Portable version (no install)
+
+1. On the [latest release](https://github.com/siklevis7/scrobbler-for-bingers/releases/latest)
+   page, download **`BingersScrobbler_Portable_<version>.zip`**.
+2. Right-click the downloaded file, choose **Extract All...**, then click **Extract**.
+3. Open the extracted folder, and double-click **`BingersScrobbler.exe`**.
+4. Follow [Set up](#set-up) from step 4.
+
+Keep the folder somewhere permanent, such as `Documents`. "Start with Windows" points at the
+`.exe` wherever it was when you turned that option on.
+
+## Uninstall
+
+1. Right-click the tray icon, and click **Exit**.
+2. Open the Start menu, and go to **Settings > Apps** (on Windows 11: **Settings > Apps >
+   Installed apps**).
+3. Find **Bingers Scrobbler**, click it (or the **…** next to it), then click **Uninstall**.
+
+Uninstalling keeps your settings, token and watch history, so a reinstall picks up where you
+left off. To remove them too, open File Explorer, type `%APPDATA%\bingers-scrobbler` in the
+address bar, press **Enter**, and delete that folder. Also delete your token on
+<https://bingers.app/integrations>.
 
 ## For developers
 
