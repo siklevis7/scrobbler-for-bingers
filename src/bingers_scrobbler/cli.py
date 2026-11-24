@@ -36,6 +36,16 @@ def setup_logging(verbose: bool) -> None:
     logging.getLogger("rebulk").setLevel(logging.WARNING)
 
 
+def _who(me: dict) -> str:
+    """Display name from GET /me, which nests the profile under "user"."""
+    user = me.get("user") or {}
+    handle = user.get("handle")
+    name = user.get("name")
+    if name and handle:
+        return f"{name} (@{handle})"
+    return name or (f"@{handle}" if handle else "your account")
+
+
 def _client_or_exit() -> BingersClient:
     token = load_token()
     if not token:
@@ -63,8 +73,7 @@ def cmd_login(_args: argparse.Namespace) -> int:
         print(f"Couldn't check the token: {exc}")
         return 1
     path = save_token(token)
-    who = me.get("handle") or me.get("name") or "your account"
-    print(f"Signed in as {who}. Token saved to {path}")
+    print(f"Signed in as {_who(me)}. Token saved to {path}")
     scopes = me.get("scopes")
     if scopes and not any("write" in str(s) for s in scopes):
         print("Warning: this token looks read-only, so it can't mark anything watched.")
@@ -76,7 +85,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
     client = _client_or_exit()
     try:
         me = client.me()
-        log.info("Signed in to Bingers as %s", me.get("handle") or me.get("name") or "you")
+        log.info("Signed in to Bingers as %s", _who(me))
     except AuthError as exc:
         log.error("Bingers refused the token: %s. Run `bingers-scrobbler login` again.", exc)
         return 1
