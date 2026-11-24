@@ -244,6 +244,7 @@ desktop app for it.
 | Disney+ | Supported (beta) |
 | Max / HBO Max | Supported (beta) |
 | Apple TV+, Hulu, Paramount+, Peacock | Experimental: works only if the site reports what's playing to the browser |
+| **Any other site** | Turn it on yourself with one click: see [Any other streaming site](#any-other-streaming-site) |
 
 It only works when you watch **in the browser on your computer**. It can't see the apps on a
 smart TV, console, phone or tablet.
@@ -338,6 +339,37 @@ saying which service.
 
 If the episode isn't finished but you want to mark it anyway, click the icon, then
 **Mark watched now**.
+
+### Any other streaming site
+
+Watching somewhere that isn't in the list above? You can turn the extension on for any site
+yourself, with no update needed:
+
+1. Open the site, and go to the page where the video plays.
+2. Click the extension's icon (the play button with a check mark).
+3. The pop-up says **"Track videos on [site name]?"**. Click **Track videos on this site**.
+4. Your browser asks: **"Bingers Scrobbler wants to read and change your data on [site]"**.
+   This permission is for **that one site only**. Click **Allow**.
+   - If the site plays its video inside a player from another company, the request names that
+     player's site too. Allow both, or the extension can't see the video.
+5. Start or keep playing the video. Within a few seconds, the icon shows a percentage, the same
+   as on Netflix. If it doesn't, reload the page once.
+
+How it works out what you're watching on these sites, from most to least reliable:
+1. **The browser's media controls:** many sites tell the browser the show and episode, for
+   the pop-up you see when you press a media key.
+2. **The page's hidden info:** many streaming sites describe each episode or film for search
+   engines (show name, season, episode number).
+3. **The tab title,** but only when it clearly contains an episode number (like `S2E5` or
+   `Season 2 Episode 5`) or a film year (like `Heat (1995)`). A title like "Home" is ignored.
+
+Click the icon to see which of these it used. If it says **"Can't read title"**, that site
+doesn't share enough information. Please
+[open an issue](https://github.com/siklevis7/scrobbler-for-bingers/issues) with the site's name.
+
+**To stop tracking a site:** open it, click the icon, then **Stop tracking it**. Or go to
+the extension's **Settings > 4. Other sites**, and click **Remove**. This also removes the
+site's permission.
 
 ### Updating the extension
 

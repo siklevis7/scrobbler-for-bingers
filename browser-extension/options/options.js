@@ -1,6 +1,40 @@
+import { getCustomSites, removeSite } from "../lib/sites.js";
 import { SERVICES, getBacklog, getHistory, getSettings, saveSettings } from "../lib/storage.js";
 
 const $ = (id) => document.getElementById(id);
+
+async function renderCustomSites() {
+  const sites = await getCustomSites();
+  const rows = sites.map((site) => {
+    const tr = document.createElement("tr");
+    const name = document.createElement("td");
+    name.textContent = new URL(site.origin).hostname.replace(/^www\./, "");
+    if (site.frameOrigins?.length) {
+      const small = document.createElement("div");
+      small.className = "small muted";
+      small.textContent = `plus its player: ${site.frameOrigins.map((o) => new URL(o).hostname).join(", ")}`;
+      name.append(small);
+    }
+    const action = document.createElement("td");
+    action.style.textAlign = "right";
+    const btn = document.createElement("button");
+    btn.className = "secondary";
+    btn.textContent = "Remove";
+    btn.addEventListener("click", async () => {
+      await removeSite(site.origin);
+      await renderCustomSites();
+    });
+    action.append(btn);
+    tr.append(name, action);
+    return tr;
+  });
+  if (!rows.length) {
+    const tr = document.createElement("tr");
+    tr.innerHTML = '<td class="muted">No sites added yet.</td>';
+    rows.push(tr);
+  }
+  $("customSites").replaceChildren(...rows);
+}
 
 function flash(text) {
   $("saved").textContent = text;
@@ -109,6 +143,7 @@ async function init() {
     await renderHistory();
   });
 
+  await renderCustomSites();
   await renderHistory();
   setInterval(renderHistory, 5000);
 }

@@ -37,6 +37,58 @@ test("title + subtitle", () => {
   assert.equal(P.fromTitleAndSubtitle("", "S1:E1"), null);
 });
 
+test("structured data: schema.org episode and movie", () => {
+  const episode = JSON.stringify({
+    "@context": "https://schema.org",
+    "@type": "TVEpisode",
+    name: "The You You Are",
+    episodeNumber: 4,
+    partOfSeason: { "@type": "TVSeason", seasonNumber: 1 },
+    partOfSeries: { "@type": "TVSeries", name: "Severance" },
+  });
+  assert.deepEqual(P.parseStructuredData([episode]), {
+    title: "Severance",
+    season: 1,
+    episode: 4,
+    episodeTitle: "The You You Are",
+  });
+
+  const graph = JSON.stringify({
+    "@graph": [{ "@type": "WebPage", name: "Watch" }, { "@type": "Movie", name: "Heat", datePublished: "1995-12-15" }],
+  });
+  assert.deepEqual(P.parseStructuredData(["{broken json", graph]), { title: "Heat", year: 1995 });
+});
+
+test("structured data: Open Graph tags", () => {
+  assert.deepEqual(
+    P.parseStructuredData([], { "og:type": "video.episode", "og:title": "Dark S03E08", "video:series": "Dark" }),
+    { title: "Dark", season: 3, episode: 8, episodeTitle: "" }
+  );
+  assert.deepEqual(P.parseStructuredData([], { "og:type": "video.movie", "og:title": "Oppenheimer (2023)" }), {
+    title: "Oppenheimer",
+    year: 2023,
+  });
+  assert.equal(P.parseStructuredData([], { "og:type": "website", "og:title": "Home" }), null);
+});
+
+test("tab title: only trusted with an episode number or a film year", () => {
+  assert.deepEqual(P.parseDocumentTitle("Watch Severance S1E4 | StreamSite", "www.streamsite.com"), {
+    title: "Severance",
+    season: 1,
+    episode: 4,
+    episodeTitle: "",
+  });
+  assert.deepEqual(P.parseDocumentTitle("Shogun - Season 1 Episode 2 - Servants of Two Masters - Flix", "flix.tv"), {
+    title: "Shogun",
+    season: 1,
+    episode: 2,
+    episodeTitle: "Servants of Two Masters",
+  });
+  assert.deepEqual(P.parseDocumentTitle("Heat (1995) - MovieBox", "moviebox.example"), { title: "Heat", year: 1995 });
+  assert.equal(P.parseDocumentTitle("Home | StreamSite", "streamsite.com"), null);
+  assert.equal(P.parseDocumentTitle("My cat video", "videos.example"), null);
+});
+
 test("media session fallback", () => {
   const set = (md) => {
     // Node has its own read-only navigator; replace it for this test.

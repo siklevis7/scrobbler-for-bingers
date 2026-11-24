@@ -36,6 +36,19 @@
       <p class="small" id="message"></p>
     </section>
 
+    <section class="card" id="siteCard" hidden>
+      <div class="title" style="margin-top:0">Track videos on <span id="siteName"></span>?</div>
+      <p class="small muted" style="margin:4px 0 10px">
+        This site isn't built in. Turn it on and the extension reads what's playing here, the same way
+        it does on Netflix. Your browser will ask you to allow it for this site only.
+      </p>
+      <button id="trackSite" style="width:100%">Track videos on this site</button>
+      <p class="small" id="siteMessage"></p>
+    </section>
+    <p class="small muted" id="siteAdded" hidden>
+      You added this site. <a href="#" id="untrackSite">Stop tracking it</a>
+    </p>
+
     <div class="actions">
       <button id="markNow" hidden>Mark watched now</button>
       <a class="button secondary" id="settings" href="#">Settings</a>

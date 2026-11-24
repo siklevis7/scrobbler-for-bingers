@@ -6,6 +6,7 @@ export const SERVICES = {
   disney: { name: "Disney+" },
   max: { name: "Max / HBO Max" },
   generic: { name: "Apple TV+, Hulu, Paramount+, Peacock (experimental)" },
+  custom: { name: "Sites you added yourself" },
 };
 
 export const DEFAULT_SETTINGS = {
@@ -15,6 +16,7 @@ export const DEFAULT_SETTINGS = {
   minWatchedMinutes: 5,
   notifications: true,
   services: Object.fromEntries(Object.keys(SERVICES).map((k) => [k, true])),
+  customSites: [], // [{ origin, frameOrigins, addedAt }] turned on with "Track videos on this site"
 };
 
 export async function getSettings() {

@@ -4,21 +4,33 @@
 import * as api from "./lib/api.js";
 import { buildItems, mediaLabel, normalize, pickBest } from "./lib/match.js";
 import { applyReport, expired, isReady, mediaKey, neededSeconds, newSession } from "./lib/tracker.js";
+import { syncSites } from "./lib/sites.js";
 import * as store from "./lib/storage.js";
 
 const RESOLVE_RETRY_MS = 60_000;
+const FRAME_MEDIA_FRESH_MS = 60_000; // how long a title from another frame of the tab stays valid
 
 // In memory while the worker is alive, mirrored to session storage so a restart keeps them.
 let sessions = {}; // `${tabId}|${mediaKey}` -> session
-let tabInfo = {}; // tabId -> { service, sessionId, noMedia, lastSeen }
+let tabInfo = {}; // tabId -> { service, sessionId, noMedia, lastSeen, site }
+let tabMedia = {}; // tabId -> { media, at }: latest title any frame of the tab reported
 const resolving = new Set();
-const loaded = chrome.storage.session.get(["sessions", "tabInfo"]).then((d) => {
+const loaded = chrome.storage.session.get(["sessions", "tabInfo", "tabMedia"]).then((d) => {
   sessions = d.sessions || {};
   tabInfo = d.tabInfo || {};
+  tabMedia = d.tabMedia || {};
 });
 
 function persist() {
-  chrome.storage.session.set({ sessions, tabInfo }).catch(() => {});
+  chrome.storage.session.set({ sessions, tabInfo, tabMedia }).catch(() => {});
+}
+
+function siteOf(sender) {
+  try {
+    return new URL(sender.tab?.url || sender.url || "").hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
 }
 
 // -- messages ----------------------------------------------------------------
@@ -32,7 +44,7 @@ async function handle(msg, sender) {
   await loaded;
   switch (msg?.type) {
     case "report":
-      return onReport(msg, sender.tab?.id);
+      return onReport(msg, sender.tab?.id, siteOf(sender));
     case "getTabState":
       return getTabState(msg.tabId);
     case "markNow":
@@ -52,6 +64,7 @@ async function handle(msg, sender) {
 function toMedia(raw) {
   const title = String(raw?.title || "").replace(/\s+/g, " ").trim();
   if (!title) return null;
+  const source = raw.source || "player";
   const episode = Number.isInteger(raw.episode) ? raw.episode : null;
   if (episode !== null) {
     return {
@@ -60,25 +73,36 @@ function toMedia(raw) {
       season: Number.isInteger(raw.season) ? raw.season : null,
       episode,
       episodeTitle: raw.episodeTitle || "",
+      source,
     };
   }
-  return { kind: "movie", title, year: Number.isInteger(raw.year) ? raw.year : null };
+  return { kind: "movie", title, year: Number.isInteger(raw.year) ? raw.year : null, source };
 }
 
-async function onReport(msg, tabId) {
+async function onReport(msg, tabId, site) {
   if (tabId === undefined) return {};
   const now = Date.now();
+
+  // Any frame that knows the title shares it with the tab, for a player in another frame.
+  if (msg.media && msg.media.title) tabMedia[tabId] = { media: msg.media, at: now };
+  if (msg.noVideo) {
+    persist();
+    return {};
+  }
+
   const settings = await store.getSettings();
   if (!settings.services[msg.service]) {
-    tabInfo[tabId] = { service: msg.service, disabled: true, lastSeen: now };
+    tabInfo[tabId] = { service: msg.service, site, disabled: true, lastSeen: now };
     setBadge(tabId, null);
     persist();
     return {};
   }
 
-  const media = toMedia(msg.media);
+  const shared = tabMedia[tabId];
+  const raw = msg.media || (shared && now - shared.at < FRAME_MEDIA_FRESH_MS ? shared.media : null);
+  const media = toMedia(raw);
   if (!media) {
-    tabInfo[tabId] = { service: msg.service, noMedia: true, lastSeen: now };
+    tabInfo[tabId] = { service: msg.service, site, noMedia: true, lastSeen: now };
     setBadge(tabId, null);
     persist();
     return {};
@@ -88,10 +112,12 @@ async function onReport(msg, tabId) {
   let session = sessions[id];
   if (!session) {
     session = newSession(tabId, msg.service, media, now);
+    session.site = site;
     sessions[id] = session;
   }
+  session.media.source = media.source;
   applyReport(session, { ...msg, tabId }, now);
-  tabInfo[tabId] = { service: msg.service, sessionId: id, lastSeen: now };
+  tabInfo[tabId] = { service: msg.service, site, sessionId: id, lastSeen: now };
 
   if (!settings.token) {
     session.state = session.state === "done" ? "done" : "error";
@@ -296,9 +322,15 @@ function ensureAlarm() {
 
 chrome.runtime.onInstalled.addListener((details) => {
   ensureAlarm();
+  syncSites().catch((e) => console.warn("syncSites failed", e));
   if (details.reason === "install") chrome.runtime.openOptionsPage();
 });
-chrome.runtime.onStartup.addListener(ensureAlarm);
+chrome.runtime.onStartup.addListener(() => {
+  ensureAlarm();
+  syncSites().catch((e) => console.warn("syncSites failed", e));
+});
+// If the user removes a site's access in the browser's own settings, stop tracking it.
+chrome.permissions.onRemoved.addListener(() => syncSites().catch(() => {}));
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   if (alarm.name !== "housekeeping") return;
@@ -313,5 +345,6 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   await loaded;
   for (const [id, s] of Object.entries(sessions)) if (s.tabId === tabId) delete sessions[id];
   delete tabInfo[tabId];
+  delete tabMedia[tabId];
   persist();
 });
