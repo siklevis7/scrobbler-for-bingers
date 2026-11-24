@@ -60,6 +60,31 @@ VLC_HELP = (
 )
 
 
+class _TrayIcon(pystray.Icon):
+    """pystray icon that builds its menu only at the moment it opens.
+
+    pystray rebuilds the menu whenever update_menu() is called. Doing that from another
+    thread while the menu is open destroys it under Windows' feet, which leaves highlights
+    stuck on submenus. Here the menu is rebuilt only on right-click, on the icon's own
+    thread, just before Windows shows it, so the status and check marks are always fresh.
+    """
+
+    _WM_RBUTTONUP = 0x0205
+    _WM_NULL = 0x0000
+
+    def _on_notify(self, wparam, lparam):  # noqa: ANN001 - pystray's signature
+        if sys.platform == "win32" and lparam == self._WM_RBUTTONUP:
+            self._update_menu()
+        result = super()._on_notify(wparam, lparam)
+        if sys.platform == "win32" and lparam == self._WM_RBUTTONUP:
+            # Microsoft's advice after TrackPopupMenu: lets the menu close cleanly
+            # when you click elsewhere.
+            from pystray._util import win32
+
+            win32.PostMessage(self._hwnd, self._WM_NULL, 0, 0)
+        return result
+
+
 class TrayApp:
     def __init__(self) -> None:
         self.config = load_config()
@@ -83,7 +108,7 @@ class TrayApp:
         self._tk_icon = ImageTk.PhotoImage(self._icon_image.resize((64, 64)))
         self.root.iconphoto(True, self._tk_icon)  # every window gets the app icon
         self._paused_image = load_icon(paused=True)
-        self.icon = pystray.Icon("bingers_scrobbler", self._icon_image, APP_TITLE, menu=self._build_menu())
+        self.icon = _TrayIcon("bingers_scrobbler", self._icon_image, APP_TITLE, menu=self._build_menu())
 
     # -- life cycle ----------------------------------------------------------
 
@@ -126,9 +151,14 @@ class TrayApp:
     def _update_icon(self) -> None:
         paused = bool(self.tracker and self.tracker.paused)
         try:
-            self.icon.icon = self._paused_image if paused or not self.tracker else self._icon_image
-            self.icon.title = f"{APP_TITLE} - {self._status()}"[:127]
-            self.icon.update_menu()
+            image = self._paused_image if paused or not self.tracker else self._icon_image
+            if self.icon.icon is not image:  # only touch the tray when something changed
+                self.icon.icon = image
+            title = f"{APP_TITLE} - {self._status()}"[:127]
+            if self.icon.title != title:
+                self.icon.title = title
+            if sys.platform != "win32":  # Windows rebuilds the menu on right-click instead
+                self.icon.update_menu()
         except Exception:  # the icon may not be visible yet right at start-up
             log.debug("Tray icon update skipped", exc_info=True)
 

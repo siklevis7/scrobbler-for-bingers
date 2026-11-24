@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bingers Scrobbler</title>
+  <link rel="stylesheet" href="../ui/style.css">
+  <style>
+    body { width: 340px; }
+    main { padding: 12px; display: grid; gap: 10px; }
+    .title { font-size: 15px; font-weight: 650; margin: 6px 0 2px; }
+    .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    .actions { display: flex; gap: 8px; }
+    .actions > * { flex: 1; text-align: center; }
+    #message:empty { display: none; }
+  </style>
+</head>
+<body>
+  <header class="brand">
+    <img src="../icons/48.png" alt="">
+    <div><h1>Bingers Scrobbler</h1><small id="account">…</small></div>
+  </header>
+  <main>
+    <section class="card" id="now">
+      <div class="row">
+        <span class="muted small" id="service">This tab</span>
+        <span class="pill" id="state">…</span>
+      </div>
+      <div class="title" id="label">…</div>
+      <div class="muted small" id="matched"></div>
+      <div id="progressBox" hidden>
+        <div class="bar" style="margin-top:10px"><span id="bar"></span><i id="mark"></i></div>
+        <div class="row small muted" style="margin-top:6px">
+          <span id="progressText"></span><span id="watchedText"></span>
+        </div>
+      </div>
+      <p class="small" id="message"></p>
+    </section>
+
+    <div class="actions">
+      <button id="markNow" hidden>Mark watched now</button>
+      <a class="button secondary" id="settings" href="#">Settings</a>
+    </div>
+    <p class="small muted" id="backlog" hidden></p>
+  </main>
+  <script src="popup.js" type="module"></script>
+</body>
+</html>

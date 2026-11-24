@@ -1,11 +1,15 @@
 # Bingers Scrobbler
 
-Watch something in **VLC** or **mpv** on your computer, and it gets marked as watched on
-[Bingers](https://bingers.app) automatically, so you never update episodes by hand.
+Watch something, and it gets marked as watched on [Bingers](https://bingers.app)
+automatically, so you never update episodes by hand. There are two parts, and you can use
+either or both:
 
-It sits in the Windows tray (by the clock), reads the file name
-(`The.Office.S02E03.720p.mkv`), finds the show on Bingers, follows your playback, and marks the
-episode watched once you're past 80%.
+| Part | For | Guide |
+|---|---|---|
+| **Desktop app** (Windows) | Video files you play in **VLC** or **mpv** | [Installation guide](#installation-guide) |
+| **Browser extension** (Chrome, Edge) | **Netflix, Prime Video, Disney+, Max** and more | [Streaming services](#streaming-services-netflix-prime-video-disney-max) |
+
+Both follow your playback and mark the episode watched once you're past 80%.
 
 > An unofficial, open-source project, inspired by
 > [Media-Player-Scrobbler-for-Simkl](https://github.com/ByteTrix/Media-Player-Scrobbler-for-Simkl).
@@ -227,6 +231,124 @@ The key is the title as it appears in the file name. The value can be `tvdb:…`
 `tmdb:show:…` / `tmdb:movie:…`, or a Bingers id. Then restart the app: right-click >
 **Exit**, and open it again from the Start menu.
 
+## Streaming services (Netflix, Prime Video, Disney+, Max)
+
+To scrobble what you watch on streaming sites, install the **Bingers Scrobbler browser
+extension** in Google Chrome or Microsoft Edge. It works on its own: you don't need the
+desktop app for it.
+
+| Service | Status |
+|---|---|
+| Netflix | Supported (beta) |
+| Prime Video | Supported (beta) |
+| Disney+ | Supported (beta) |
+| Max / HBO Max | Supported (beta) |
+| Apple TV+, Hulu, Paramount+, Peacock | Experimental: works only if the site reports what's playing to the browser |
+
+It only works when you watch **in the browser on your computer**. It can't see the apps on a
+smart TV, console, phone or tablet.
+
+### Step 1: Download the extension
+
+1. Open the [latest release](https://github.com/siklevis7/scrobbler-for-bingers/releases/latest)
+   page.
+2. Under **Assets**, click **`BingersScrobbler_Extension_<version>.zip`** to download it.
+
+### Step 2: Unzip it to a permanent place
+
+1. Open your **Downloads** folder (press **Windows key + E**, then click **Downloads**).
+2. Right-click **`BingersScrobbler_Extension_<version>.zip`**, and choose **Extract All...**
+3. In the window that opens, click **Browse...**, choose your **Documents** folder, and click
+   **Select Folder**.
+4. Click **Extract**. You now have a folder called **`BingersScrobbler_Extension`** inside
+   Documents.
+
+> **Don't delete or move this folder later.** The browser loads the extension from it every
+> time it starts.
+
+### Step 3: Add it to your browser
+
+**In Google Chrome:**
+
+1. Click the address bar at the top, type `chrome://extensions`, and press **Enter**.
+2. At the top right, turn on the **Developer mode** switch.
+3. Three new buttons appear at the top left. Click **Load unpacked**.
+4. Go to **Documents**, click the **`BingersScrobbler_Extension`** folder once, then click
+   **Select Folder**.
+5. A card called **Bingers Scrobbler** appears in the list. The extension is installed.
+
+**In Microsoft Edge:**
+
+1. Click the address bar, type `edge://extensions`, and press **Enter**.
+2. On the left, turn on the **Developer mode** switch. If you don't see the left side, make the
+   window wider.
+3. Click **Load unpacked**.
+4. Go to **Documents**, click the **`BingersScrobbler_Extension`** folder once, then click
+   **Select Folder**.
+
+The browser may sometimes show a message about "developer mode extensions" when it starts.
+That's normal for extensions installed this way: close the message, and don't click **Turn off**.
+
+### Step 4: Pin it to the toolbar
+
+1. At the top right of the browser, click the **puzzle-piece** icon (Extensions).
+2. Next to **Bingers Scrobbler**, click the **pin** icon.
+
+The extension's icon (the play button with a check mark) now stays next to the address bar.
+
+### Step 5: Sign in
+
+The extension's **Settings** page opens by itself after installing. If it doesn't, click the
+extension's icon, then click **Settings**.
+
+1. Click **Open token page**, sign in to Bingers, go to **Personal tokens**, click **Create**,
+   and choose **read + write**. You can also reuse the token you made for the desktop app.
+2. Copy the token (it starts with `bng_pat_`).
+3. Go back to the Settings page, paste the token into the box, and click **Save**.
+4. It says **"Signed in as"** followed by your Bingers name.
+
+On the same page you can choose the completion threshold, turn notifications on or off, and
+turn individual streaming services on or off.
+
+### Step 6: Watch something
+
+1. Open Netflix (or another supported service) in the browser, and start an episode.
+2. **Move your mouse over the video** for a moment. The player then shows the show's title,
+   which is where the extension reads it from.
+3. After a few seconds, the extension's icon shows a percentage, for example **12%**. That
+   means it's tracking.
+4. Click the icon at any time to see what it detected, which Bingers title it matched, and how
+   close you are to being marked.
+5. Once you're past 80%, with at least 5 minutes of real watching, the icon shows a green
+   **✓** and a notification says it was marked watched.
+
+What the icon shows:
+
+| Icon shows | Meaning |
+|---|---|
+| **12%** | Tracking this episode |
+| green **✓** | Marked watched on Bingers |
+| orange **…** | Bingers wasn't reachable; it's saved and will be sent automatically |
+| red **!** | A problem: click the icon to see what happened |
+
+If the pop-up says **"Can't read title"**, move your mouse over the video so the title
+appears, and wait a few seconds. If it keeps happening on one service, that site has probably
+changed its player. Please [open an issue](https://github.com/siklevis7/scrobbler-for-bingers/issues)
+saying which service.
+
+If the episode isn't finished but you want to mark it anyway, click the icon, then
+**Mark watched now**.
+
+### Updating the extension
+
+1. Download the new **`BingersScrobbler_Extension_<version>.zip`** from the latest release.
+2. Extract it to **Documents** again. When Windows asks, choose **Replace the files in the
+   destination**.
+3. Open `chrome://extensions` (or `edge://extensions`), and click the **reload** arrow on the
+   Bingers Scrobbler card.
+
+Your token and settings are kept.
+
 ## Troubleshooting
 
 **I can't find the tray icon.**
@@ -322,7 +444,8 @@ install [Inno Setup 6](https://jrsoftware.org/isinfo.php), then run:
 
 ### Publish a release
 
-1. Set the version in `src/bingers_scrobbler/__init__.py` and `pyproject.toml`.
+1. Set the same version in `src/bingers_scrobbler/__init__.py`, `pyproject.toml` and
+   `browser-extension/manifest.json`.
 2. Commit and push.
 3. Push a matching tag:
 
@@ -353,6 +476,13 @@ src/bingers_scrobbler/
   players/        VLC web interface, mpv JSON IPC
 packaging/        PyInstaller recipe and Inno Setup installer
 tests/            pytest suite
+browser-extension/
+  manifest.json   Chrome/Edge extension (Manifest V3)
+  background.js   matching, watch-time counting, scrobbling, backlog
+  content/        readers that run inside each streaming site
+  lib/            Bingers API client, matcher, tracker (shared logic)
+  popup/ options/ the toolbar pop-up and the settings page
+  tests/          Node tests: `cd browser-extension` then `node --test`
 ```
 
 ## Roadmap ideas

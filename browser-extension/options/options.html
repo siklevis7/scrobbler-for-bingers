@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bingers Scrobbler settings</title>
+  <link rel="stylesheet" href="../ui/style.css">
+  <style>
+    main { max-width: 680px; margin: 24px auto 60px; padding: 0 16px; display: grid; gap: 16px; }
+    h2 { margin: 0 0 4px; font-size: 16px; }
+    .card p { margin: 6px 0 12px; }
+    ol { margin: 6px 0 12px; padding-left: 20px; }
+    ol li { margin: 3px 0; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row > input { flex: 1; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    label.check { display: flex; gap: 8px; align-items: center; margin: 6px 0; }
+    #status:empty, #saved:empty { display: none; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    td, th { text-align: left; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); font-weight: 600; }
+  </style>
+</head>
+<body>
+  <header class="brand">
+    <img src="../icons/48.png" alt="">
+    <div><h1>Bingers Scrobbler</h1><small>Marks what you stream as watched on Bingers. Unofficial.</small></div>
+  </header>
+  <main>
+    <section class="card">
+      <h2>1. Sign in to Bingers</h2>
+      <p id="signedIn" class="muted">Not signed in.</p>
+      <ol id="howto">
+        <li>Click <b>Open token page</b>, and sign in to Bingers if it asks.</li>
+        <li>Under <b>Personal tokens</b>, click <b>Create</b>, and choose <b>read + write</b>.</li>
+        <li>Copy the token (it starts with <code>bng_pat_</code>), paste it below, and click <b>Save</b>.</li>
+      </ol>
+      <p class="small muted">Needs the Bingers Legend or Icon plan. Keep the token secret: anyone who has it can change your library.</p>
+      <div class="row">
+        <input id="token" type="password" placeholder="bng_pat_…" autocomplete="off" spellcheck="false">
+        <button id="save">Save</button>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <a class="button secondary" href="https://bingers.app/integrations" target="_blank" rel="noopener">Open token page</a>
+        <button class="secondary" id="signOut" hidden>Sign out</button>
+      </div>
+      <p id="status" class="small"></p>
+    </section>
+
+    <section class="card">
+      <h2>2. When to mark as watched</h2>
+      <div class="grid">
+        <label>Completion threshold
+          <select id="threshold">
+            <option value="65">65%</option>
+            <option value="80">80% (default)</option>
+            <option value="90">90%</option>
+          </select>
+        </label>
+        <label>Minimum real watch time (minutes)
+          <input id="minWatched" type="number" min="0" max="60" step="1">
+        </label>
+      </div>
+      <p class="small muted">Paused time and skipping ahead don't count toward the watch time. Short videos only need half their length.</p>
+      <label class="check"><input type="checkbox" id="notifications"> Show a notification when something is marked</label>
+    </section>
+
+    <section class="card">
+      <h2>3. Streaming services</h2>
+      <div id="services"></div>
+      <p id="saved" class="small" style="color: var(--ok)"></p>
+    </section>
+
+    <section class="card">
+      <h2>History</h2>
+      <p class="small muted" id="backlog"></p>
+      <button class="secondary" id="flush" hidden>Send saved marks now</button>
+      <table style="margin-top:10px">
+        <thead><tr><th>When</th><th>What</th><th>Result</th></tr></thead>
+        <tbody id="history"></tbody>
+      </table>
+    </section>
+
+    <p class="small muted">
+      Open source (GPL-3.0): <a href="https://github.com/siklevis7/scrobbler-for-bingers" target="_blank" rel="noopener">github.com/siklevis7/scrobbler-for-bingers</a>
+    </p>
+  </main>
+  <script src="options.js" type="module"></script>
+</body>
+</html>

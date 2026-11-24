@@ -28,6 +28,21 @@ jobs:
       - name: Test
         run: pytest -q
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Test the browser extension
+        working-directory: browser-extension
+        run: node --test
+
+      - name: Check the extension version matches the app version
+        shell: pwsh
+        run: |
+          $app = python -c "import bingers_scrobbler; print(bingers_scrobbler.__version__)"
+          $ext = (Get-Content browser-extension/manifest.json -Raw | ConvertFrom-Json).version
+          if ($app -ne $ext) { Write-Error "App $app vs extension $ext"; exit 1 }
+
       - name: Check the tag matches the app version
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
@@ -60,12 +75,23 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Compress-Archive -Path dist/BingersScrobbler/* -DestinationPath "dist/BingersScrobbler_Portable_$version.zip"
 
+      - name: Package the browser extension
+        shell: pwsh
+        run: |
+          $version = (Get-Content browser-extension/manifest.json -Raw | ConvertFrom-Json).version
+          $stage = "dist/extension/BingersScrobbler_Extension"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item browser-extension/* $stage -Recurse -Exclude tests, package.json
+          Remove-Item "$stage/tests" -Recurse -Force -ErrorAction SilentlyContinue
+          Compress-Archive -Path "dist/extension/BingersScrobbler_Extension" -DestinationPath "dist/BingersScrobbler_Extension_$version.zip"
+
       - uses: actions/upload-artifact@v4
         with:
           name: windows-build
           path: |
             dist/BingersScrobbler_Setup_*.exe
             dist/BingersScrobbler_Portable_*.zip
+            dist/BingersScrobbler_Extension_*.zip
 
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/')
@@ -74,4 +100,5 @@ jobs:
           files: |
             dist/BingersScrobbler_Setup_*.exe
             dist/BingersScrobbler_Portable_*.zip
+            dist/BingersScrobbler_Extension_*.zip
           generate_release_notes: true
