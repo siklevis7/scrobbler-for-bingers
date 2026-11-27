@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
-from .api import BingersClient
+from .api import BingersClient, BingersError, TransientError
 
 log = logging.getLogger(__name__)
 
@@ -83,7 +83,12 @@ def after_mark(
     today = today or date.today()
     result = AfterMark()
     try:
-        episodes = client.episodes(ref)
+        try:
+            episodes = client.episodes(ref)
+        except TransientError:
+            raise
+        except BingersError:  # very long shows may insist on a season
+            episodes = []
         if not episodes:  # very long shows answer per season
             episodes = client.episodes(ref, season=season)
             if not next_episode(episodes, season, number):

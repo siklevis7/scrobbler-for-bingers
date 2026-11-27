@@ -25,6 +25,15 @@ async function errorMessage(resp) {
   }
 }
 
+const LANG_PATHS = new Set(["/search", "/similar", "/watchlist", "/library/check", "/titles", "/entries", "/recent", "/library"]);
+
+/** True for the endpoints whose contract lists a `lang` parameter. */
+export function takesLang(path) {
+  const p = String(path).split("?")[0];
+  // /titles/{ref} takes it, /titles/{ref}/episodes doesn't.
+  return LANG_PATHS.has(p) || (p.startsWith("/titles/") && p.split("/").length === 3);
+}
+
 export async function request(token, method, path, { params, body } = {}, fetchImpl = fetch) {
   const url = new URL(BASE_URL + path);
   for (const [k, v] of Object.entries(params || {})) {
@@ -32,7 +41,8 @@ export async function request(token, method, path, { params, body } = {}, fetchI
   }
   // Names in English. Without it Bingers answers with original names ("La casa de papel",
   // "進撃の巨人"), which the English names on most sites never match. lang: "" turns it off.
-  if (method === "GET" && !(params && "lang" in params)) url.searchParams.set("lang", "en");
+  // Only where the contract allows it: /me and episode lists answer 400 to an unknown parameter.
+  if (method === "GET" && takesLang(path) && !(params && "lang" in params)) url.searchParams.set("lang", "en");
   const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
 

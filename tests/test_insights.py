@@ -46,6 +46,17 @@ def test_get_requests_ask_for_english_names():
     assert "lang" not in sent[1][1]
     assert sent[2][0] == "POST" and not sent[2][1]
 
+    # Bingers answers 400 "Unknown query parameter 'lang'" on these: never send it there.
+    sent.clear()
+    client.me()
+    client.episodes("tvdb:1")
+    client.episodes("tvdb:1", season=2)
+    assert all("lang" not in (params or {}) for _, params in sent)
+    client.title("tvdb:1")
+    client.watchlist()
+    client.check(["a"])
+    assert all(params.get("lang") == "en" for _, params in sent[3:])
+
 
 class LibraryClient:
     def __init__(self, results, library=None, local=None):

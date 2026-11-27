@@ -30,6 +30,13 @@ test("GET requests ask for English names unless told not to", async () => {
   assert.match(urls[0], /lang=en/);
   assert.doesNotMatch(urls[1], /lang=/);
   assert.doesNotMatch(urls[2], /lang=/);
+  // Bingers answers 400 "Unknown query parameter 'lang'" on these: never send it there.
+  await request("t", "GET", "/me", {}, fake);
+  await request("t", "GET", "/titles/tvdb%3A1/episodes", { params: { season: 1 } }, fake);
+  await request("t", "GET", "/titles/tvdb%3A1", {}, fake);
+  assert.doesNotMatch(urls[3], /lang=/);
+  assert.doesNotMatch(urls[4], /lang=/);
+  assert.match(urls[5], /lang=en/);
 });
 
 test("same-name shows: the one in your library wins a close call, not a clear year", () => {

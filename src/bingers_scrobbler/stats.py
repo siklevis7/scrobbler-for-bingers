@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .api import BingersClient
+from .api import AuthError, BingersClient, BingersError, TransientError
 
 log = logging.getLogger(__name__)
 
@@ -112,7 +112,17 @@ class WatchStats:
         now = now or datetime.now(timezone.utc)
         cutoff = now - timedelta(days=KEEP_DAYS)
         for _ in range(MAX_PAGES):
-            page = client.entries(self.cursor)
+            try:
+                page = client.entries(self.cursor)
+            except (AuthError, TransientError):
+                raise
+            except BingersError:
+                if not self.cursor:
+                    raise
+                # The saved position was refused (expired or reset): start over once.
+                log.info("History position refused; reloading the recent history")
+                self.cursor, self.rows = None, {}
+                page = client.entries(None)
             for row in page.get("items") or []:
                 self._apply(row, cutoff)
             if page.get("next_cursor"):

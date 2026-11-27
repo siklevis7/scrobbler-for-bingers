@@ -55,7 +55,10 @@ const FINISHED_CATALOG = new Set(["ended", "canceled", "cancelled"]);
 export async function afterMark(api, token, ref, season, number, { suggestions = true, today = new Date() } = {}) {
   const out = { note: null, finished: false, show: null, suggestions: [] };
   try {
-    let list = await api.episodes(token, ref);
+    let list = await api.episodes(token, ref).catch((err) => {
+      if (err.transient || err.auth) throw err;
+      return []; // very long shows may insist on a season
+    });
     if (!list.length) {
       list = await api.episodes(token, ref, season);
       if (!nextEpisode(list, season, number)) list = list.concat(await api.episodes(token, ref, season + 1));

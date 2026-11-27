@@ -67,6 +67,8 @@ def cmd_run(_args: argparse.Namespace) -> int:
         return 1
     except TransientError as exc:
         log.warning("Bingers isn't reachable right now (%s); scrobbles will wait in the backlog", exc)
+    except BingersError as exc:  # unexpected answer: still track
+        log.warning("Couldn't check the account with Bingers (%s); tracking anyway", exc)
 
     players = build_players(config)
     if not players:
@@ -110,7 +112,8 @@ def cmd_match(args: argparse.Namespace) -> int:
         if match is None:
             print("Bingers: no matching title. Add one under [overrides] in config.toml.")
             return 1
-        print(f"Bingers: {match.name}" + (f" ({match.year})" if match.year else "") + f"  [{match.ref}]")
+        year = f" ({match.year})" if match.year and not match.name.endswith(f"({match.year})") else ""
+        print(f"Bingers: {match.name}{year}  [{match.ref}]")
         for result in client.scrobble(build_items(media, match), dry_run=True):
             print(f"Dry run: {describe_result(result)}")
     except BingersError as exc:

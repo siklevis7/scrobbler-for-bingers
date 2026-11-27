@@ -111,6 +111,7 @@ class TrayApp:
         self.update_release: updater.Release | None = None
         self.update_file: Path | None = None  # a downloaded installer waiting to be run
         self.update_busy = threading.Lock()
+        self.portable_notified: str | None = None
         self.watch: list[insights.WatchItem] = []  # "What to Watch", refreshed in the background
         self.watch_total = 0
         self.watch_loaded = False
@@ -202,8 +203,18 @@ class TrayApp:
             self.worker.join(timeout=self.config.scrobble.poll_interval + 20)
         self.worker = None
         self.tracker = None
+        self.client = None  # signed out or a new token: background refreshes stop using the old one
 
     def _tracker_main(self, token: str, stop: threading.Event) -> None:
+        try:
+            self._run_tracker(token, stop)
+        except Exception as exc:  # never sit on "Starting" without saying why
+            log.exception("The tracker stopped")
+            self.problem = f"Stopped by an error - see the log ({exc.__class__.__name__})"
+            self._notify("Bingers Scrobbler hit an error and stopped tracking. Settings > Open Logs Folder shows why.")
+            self._update_icon()
+
+    def _run_tracker(self, token: str, stop: threading.Event) -> None:
         client = BingersClient(token)
         try:
             self.account = display_name(client.me())
@@ -217,6 +228,8 @@ class TrayApp:
             return
         except TransientError as exc:
             log.warning("Bingers isn't reachable right now (%s); scrobbles will wait in the backlog", exc)
+        except Exception as exc:  # anything unexpected: still track, and say so in the log
+            log.exception("Couldn't check the account with Bingers (%s); tracking anyway", exc)
         self.client = client
         self.tracker = Tracker(
             build_players(self.config),
@@ -356,7 +369,9 @@ class TrayApp:
                 "Bingers",
                 Menu(
                     Item(
-                        lambda _i: f"Signed in as {self.account}" if self.account else "Not signed in",
+                        lambda _i: f"Signed in as {self.account}"
+                        if self.account
+                        else ("Signed in (checking account...)" if load_token() else "Not signed in"),
                         None,
                         enabled=False,
                     ),
@@ -556,7 +571,8 @@ class TrayApp:
                     + "\n\n"
                     + self.stats.describe(start - timedelta(days=7), start, "Last week")
                 )
-            except BingersError as exc:
+            except Exception as exc:
+                log.warning("Weekly summary failed: %s", exc)
                 text = f"Couldn't load your history from Bingers right now:\n{exc}"
             self._ui(lambda: dialogs.message(self.root, "Your week", text))
 
@@ -580,7 +596,7 @@ class TrayApp:
                 if overview:
                     lines.append("")
                     lines.append(overview[:400] + ("..." if len(overview) > 400 else ""))
-            except BingersError as exc:
+            except Exception as exc:
                 lines.append(f"(Couldn't load where to watch it: {exc})")
             links = [("Open on Bingers", entry.url)] if entry.url else []
             self._ui(lambda: dialogs.message(self.root, entry.name, "\n".join(lines), links))
@@ -623,7 +639,8 @@ class TrayApp:
         except updater.UpdateError as exc:
             log.warning("Update check failed: %s", exc)
             if manual:
-                self._ui(lambda: self._update_failed(f"Couldn't check for updates:\n{exc}"))
+                text = f"Couldn't check for updates:\n{exc}"  # exc is gone once the except block ends
+                self._ui(lambda: self._update_failed(text))
             return
 
         if not updater.is_newer(release.version):
@@ -652,7 +669,8 @@ class TrayApp:
         except updater.UpdateError as exc:
             log.warning("Update download failed: %s", exc)
             if manual:
-                self._ui(lambda: self._update_failed(f"Couldn't download version {release.version}:\n{exc}"))
+                text = f"Couldn't download version {release.version}:\n{exc}"
+                self._ui(lambda: self._update_failed(text))
             else:
                 self._notify(
                     f"Version {release.version} is out, but the download failed. "
@@ -662,12 +680,16 @@ class TrayApp:
         log.info("Downloaded %s", path)
 
         if mode == updater.MODE_PORTABLE:
-            self._notify(
-                f"Version {release.version} was saved to your Downloads folder as {path.name}. "
-                "Exit the scrobbler, then unzip it over your current copy.",
-                force=True,
-            )
-            winutil.open_path(path.parent)
+            # Once per version unless you asked: the daily check mustn't nag or open windows.
+            if manual or self.portable_notified != release.version:
+                self.portable_notified = release.version
+                self._notify(
+                    f"Version {release.version} was saved to your Downloads folder as {path.name}. "
+                    "Exit the scrobbler, then unzip it over your current copy.",
+                    force=True,
+                )
+            if manual:
+                winutil.open_path(path.parent)
             return
 
         updater.clean_old(folder, keep=path)
@@ -701,7 +723,8 @@ class TrayApp:
             winutil.set_autostart(not winutil.autostart_enabled())
         except OSError as exc:
             log.error("Couldn't change Start with Windows: %s", exc)
-            self._ui(lambda: dialogs.error(self.root, f"Couldn't change 'Start with Windows':\n{exc}"))
+            text = f"Couldn't change 'Start with Windows':\n{exc}"
+            self._ui(lambda: dialogs.error(self.root, text))
         self._update_icon()
 
     # -- windows (Tk thread) ---------------------------------------------------

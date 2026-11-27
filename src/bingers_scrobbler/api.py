@@ -131,7 +131,9 @@ class BingersClient:
     # -- plumbing ----------------------------------------------------------
 
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        if method == "GET":
+        # Only the reads that list titles take a language; others (/me, episode lists) answer
+        # 400 "Unknown query parameter 'lang'", so it's added only where it's allowed.
+        if method == "GET" and takes_lang(path):
             params = dict(kwargs.get("params") or {})
             params.setdefault("lang", self.lang)
             if not params["lang"]:
@@ -163,6 +165,17 @@ class BingersClient:
         except ValueError as exc:
             raise TransientError("Bingers returned a response that isn't JSON", status=status) from exc
         return data if isinstance(data, dict) else {"data": data}
+
+
+_LANG_PATHS = {"/search", "/similar", "/watchlist", "/library/check", "/titles", "/entries", "/recent", "/library"}
+
+
+def takes_lang(path: str) -> bool:
+    """True for the endpoints whose contract lists a `lang` parameter."""
+    if path in _LANG_PATHS:
+        return True
+    # /titles/{ref} does, /titles/{ref}/episodes doesn't.
+    return path.startswith("/titles/") and path.count("/") == 2
 
 
 def _retry_after(resp: requests.Response) -> float:

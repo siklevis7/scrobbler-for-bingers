@@ -399,11 +399,31 @@ async function resetLibraryData() {
   await chrome.storage.session.remove("watchlist").catch(() => {});
 }
 
+// One weekly-data job at a time (the pop-up's "Your week" and the Sunday alarm can overlap).
+let weeklyChain = Promise.resolve();
+function withWeekly(job) {
+  const run = weeklyChain.then(job, job);
+  weeklyChain = run.catch(() => {});
+  return run;
+}
+
+async function feedPage(token, weekly) {
+  try {
+    return await api.entries(token, weekly.cursor);
+  } catch (err) {
+    if (err.transient || err.auth || !weekly.cursor) throw err;
+    // The saved position was refused (expired or reset): start over once.
+    weekly.cursor = null;
+    weekly.rows = {};
+    return api.entries(token, null);
+  }
+}
+
 /** Bring the last few weeks of history up to date from Bingers' change feed. */
 async function syncWeekly(token) {
   const weekly = await loadWeekly();
   for (let i = 0; i < MAX_FEED_PAGES; i++) {
-    const page = await api.entries(token, weekly.cursor);
+    const page = await feedPage(token, weekly);
     applyEntries(weekly.rows, page.items);
     if (page.next_cursor) weekly.cursor = page.next_cursor;
     if (!page.has_more) break;
@@ -425,7 +445,7 @@ async function getWeek() {
   const settings = await store.getSettings();
   if (!settings.token) return { error: "Sign in first." };
   try {
-    const weekly = await syncWeekly(settings.token);
+    const weekly = await withWeekly(() => syncWeekly(settings.token));
     const [start, end] = weekBounds(new Date());
     return { text: describeWeek(weekly.rows, weekly.titles, start, end, "This week so far").text };
   } catch (err) {
@@ -433,7 +453,9 @@ async function getWeek() {
   }
 }
 
-async function maybeWeeklySummary() {
+const maybeWeeklySummary = () => withWeekly(weeklySummaryJob);
+
+async function weeklySummaryJob() {
   const settings = await store.getSettings();
   if (!settings.token || !settings.weeklySummary) return;
   const now = new Date();

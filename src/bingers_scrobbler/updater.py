@@ -195,6 +195,9 @@ def download(
     except UpdateError:
         partial.unlink(missing_ok=True)
         raise
+    except OSError as exc:  # disk full, folder not writable, antivirus lock…
+        partial.unlink(missing_ok=True)
+        raise UpdateError(f"Couldn't save the download ({exc})") from exc
 
     if release.asset_size is not None and received != release.asset_size:
         partial.unlink(missing_ok=True)
@@ -202,7 +205,11 @@ def download(
     if release.sha256 and sha.hexdigest() != release.sha256:
         partial.unlink(missing_ok=True)
         raise UpdateError("The downloaded file didn't match GitHub's checksum, so it was deleted")
-    os.replace(partial, target)
+    try:
+        os.replace(partial, target)
+    except OSError as exc:
+        partial.unlink(missing_ok=True)
+        raise UpdateError(f"Couldn't save the download ({exc})") from exc
     return target
 
 
