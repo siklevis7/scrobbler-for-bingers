@@ -25,6 +25,17 @@
     }
     .result:hover { border-color: var(--accent); }
     .result small { color: var(--muted); white-space: nowrap; }
+    #watchList { display: grid; gap: 4px; margin-top: 6px; }
+    .watch {
+      display: block; width: 100%; text-align: left; background: transparent; border: 0; color: var(--text);
+      font-weight: 500; padding: 6px 0; border-top: 1px solid var(--line); cursor: pointer;
+    }
+    .watch:first-child { border-top: 0; }
+    .watch:hover b { color: var(--accent); }
+    .watch b { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .watch small { color: var(--muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .watch .where { white-space: normal; color: var(--text); margin-top: 4px; }
+    #weekText { white-space: pre-line; }
   </style>
 </head>
 <body>
@@ -90,6 +101,16 @@
     <p class="small muted" id="siteAdded" hidden>
       You added this site. <a href="#" id="untrackSite">Stop tracking it</a>
     </p>
+
+    <section class="card" id="watchCard" hidden>
+      <div class="row">
+        <span class="title" style="margin:0">What to watch</span>
+        <a href="#" class="small" id="weekLink">Your week</a>
+      </div>
+      <p class="small muted" id="weekText" hidden></p>
+      <div id="watchList"></div>
+      <p class="small muted" id="watchMore" style="margin:6px 0 0" hidden></p>
+    </section>
 
     <div class="actions">
       <button id="markNow" hidden>Mark watched now</button>

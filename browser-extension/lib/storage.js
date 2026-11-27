@@ -15,6 +15,9 @@ export const DEFAULT_SETTINGS = {
   threshold: 80,
   minWatchedMinutes: 5,
   notifications: true,
+  upNext: true, // add the next episode to the "marked watched" notification
+  suggestions: true, // suggest similar shows after the last episode of one
+  weeklySummary: true, // what you watched, on Sunday evening
   services: Object.fromEntries(Object.keys(SERVICES).map((k) => [k, true])),
   customSites: [], // [{ origin, frameOrigins, addedAt }] turned on with "Track videos on this site"
 };

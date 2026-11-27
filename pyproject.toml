@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bingers-scrobbler"
-version = "0.4.2"
+version = "0.5.0"
 description = "Automatically mark what you watch in local media players as watched on Bingers."
 readme = "README.md"
 license = "GPL-3.0-or-later"

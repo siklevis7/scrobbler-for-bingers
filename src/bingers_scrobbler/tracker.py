@@ -13,6 +13,7 @@ from .api import AuthError, BingersClient, BingersError, TransientError, describ
 from .backlog import Backlog
 from .config import ScrobbleSettings
 from .history import History
+from .insights import after_mark
 from .matcher import Match, Matcher
 from .parser import ParsedMedia, parse_filename
 from .players import PlaybackState, Player
@@ -31,6 +32,7 @@ EVENT_QUEUED = "queued"  # couldn't send, saved to the backlog
 EVENT_UNMATCHED = "unmatched"  # no Bingers title for this file
 EVENT_ERROR = "error"  # Bingers rejected something
 EVENT_AUTH = "auth"  # token refused
+EVENT_FINISHED = "finished"  # the last episode of a show: similar titles to try next
 
 
 @dataclass
@@ -54,6 +56,16 @@ def build_items(media: ParsedMedia, match: Match) -> list[dict[str, Any]]:
     # No season in the name ("Show - 03.mkv") usually means season 1.
     season = media.season if media.season is not None else 1
     return [{"title": match.ref, "season": season, "episode": ep} for ep in media.episodes]
+
+
+def mark_outcome(results: list[dict[str, Any]]) -> str:
+    """How to say what Bingers did: marked, re-marked as a rewatch, or nothing new."""
+    statuses = {r.get("status") for r in results}
+    if statuses == {"already"}:
+        return "already watched"
+    if any(r.get("outcome") == "rewatched" for r in results):
+        return "marked as a rewatch"
+    return "marked watched"
 
 
 def _now_iso() -> str:
@@ -82,6 +94,8 @@ class Tracker:
         self.on_event = on_event
         self.sessions: dict[tuple[str, str], Session] = {}
         self.paused = False
+        self.up_next = True  # add the next episode to the "marked watched" notification
+        self.suggest = True  # suggest similar titles after the last episode of a show
         self.now_playing: str | None = None
         self.last_scrobble: tuple[str, list[dict[str, Any]]] | None = None  # (label, items)
         self._next_flush = 0.0
@@ -315,14 +329,42 @@ class Tracker:
         for result in results:
             log.info("Marked watched: %s", describe_result(result))
         if statuses <= {"ok", "already"} and results:
-            outcome = "already watched" if statuses == {"already"} else "marked watched"
+            outcome = mark_outcome(results)
             self._record(label, outcome)
-            self._emit(EVENT_SCROBBLED, f"{label} {outcome}")
+            message = f"{label} {outcome}"
+            extra = self._after_mark(results)
+            if extra and extra.note:
+                message += f"\n{extra.note}"
+            self._emit(EVENT_SCROBBLED, message)
+            if extra and extra.finished and extra.suggestions:
+                show = extra.show or label
+                self._emit(
+                    EVENT_FINISHED,
+                    f"You finished {show}! You might like: {', '.join(extra.suggestions)}",
+                )
         else:
             detail = "; ".join(describe_result(r) for r in results) or "no result"
             self._record(label, detail)
             self._emit(EVENT_ERROR, f"{label}: {detail}")
         return results
+
+    def _after_mark(self, results: list[dict[str, Any]]):
+        """Next episode / finished show, for the episode marked last. None for movies."""
+        if not self.up_next and not self.suggest:
+            return None
+        last = results[-1]
+        ref = (last.get("title") or {}).get("id")
+        ep = last.get("episode") or {}
+        if not ref or not isinstance(ep.get("season"), int) or not isinstance(ep.get("number"), int):
+            return None
+        extra = after_mark(self.client, ref, ep["season"], ep["number"], want_suggestions=self.suggest)
+        if extra.note:
+            log.info("  %s", extra.note)
+        if extra.suggestions:
+            log.info("  similar titles: %s", ", ".join(extra.suggestions))
+        if not self.up_next:
+            extra.note = None
+        return extra
 
     def _record(self, label: str, result: str) -> None:
         if self.history is not None:

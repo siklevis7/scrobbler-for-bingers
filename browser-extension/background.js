@@ -2,12 +2,15 @@
 // Bingers, counts real watch time, and marks things watched at the threshold.
 
 import * as api from "./lib/api.js";
-import { buildItems, findEpisodeByName, mediaLabel, normalize, pickBest, searchVariants, splitTag } from "./lib/match.js";
+import { buildItems, findEpisodeByName, isCloseCall, mediaLabel, normalize, rankCandidates, searchVariants, splitTag } from "./lib/match.js";
+import { afterMark, applyEntries, describeWeek, dueWeek, markOutcome, watchItems, watchTotal, weekBounds, weekKey, whereToWatch } from "./lib/insights.js";
 import { MIN_VIDEO_SECONDS, applyReport, expired, isReady, mediaKey, neededSeconds, newSession } from "./lib/tracker.js";
 import { syncSites } from "./lib/sites.js";
 import * as store from "./lib/storage.js";
 
 const RESOLVE_RETRY_MS = 60_000;
+const WATCHLIST_FRESH_MS = 10 * 60_000;
+const MAX_FEED_PAGES = 20;
 const FRAME_MEDIA_FRESH_MS = 60_000; // how long a title from another frame of the tab stays valid
 
 // In memory while the worker is alive, mirrored to session storage so a restart keeps them.
@@ -63,11 +66,18 @@ async function handle(msg, sender) {
       return checkToken(msg.token);
     case "signOut":
       await store.saveSettings({ token: "", account: "" });
+      await resetLibraryData();
       return { ok: true };
     case "searchTitles":
       return searchTitles(msg.query);
     case "chooseTitle":
       return chooseTitle(msg);
+    case "getWatchlist":
+      return getWatchlist(Boolean(msg.refresh));
+    case "titleDetails":
+      return titleDetails(msg.id);
+    case "getWeek":
+      return getWeek();
     default:
       return { error: "unknown message" };
   }
@@ -209,7 +219,7 @@ async function resolve(id, token) {
         for (const query of searchVariants(media.title, media.year)) {
           // For the "Dark Matter 2024" search, still compare names as "Dark Matter".
           const searchAs = media.year && query === `${media.title} ${media.year}` ? media : { ...media, title: query };
-          const candidate = pickBest(searchAs, await api.search(token, query, kind));
+          const candidate = await bestCandidate(token, searchAs, await api.search(token, query, kind));
           if (candidate && yearFits(candidate)) {
             match = { ref: candidate.id, name: candidate.title || media.title, year: candidate.year ?? null };
             break;
@@ -217,6 +227,12 @@ async function resolve(id, token) {
           fallback = fallback || candidate;
         }
         if (!match && fallback) match = { ref: fallback.id, name: fallback.title || media.title, year: fallback.year ?? null };
+        if (!match) {
+          // The page may show the show's own name ("La casa de papel"): Bingers answers in English
+          // unless asked for original names.
+          const local = await bestCandidate(token, media, await api.searchOriginal(token, media.title, kind));
+          if (local) match = { ref: local.id, name: local.title || media.title, year: local.year ?? null };
+        }
         if (match) await store.setCachedMatch(cacheKey, match);
       } catch (err) {
         if (err.transient) {
@@ -270,6 +286,21 @@ async function resolve(id, token) {
   }
 }
 
+/** The best fit; when two same-name titles are close, the one in your library wins. */
+async function bestCandidate(token, media, results) {
+  let ranked = rankCandidates(media, results);
+  if (isCloseCall(media, ranked)) {
+    const top = ranked.slice(0, 4);
+    try {
+      const library = await api.check(token, top.map((c) => c.id));
+      ranked = rankCandidates(media, top, library).concat(ranked.slice(4));
+    } catch (err) {
+      console.info("Couldn't check the library; using the search order", err);
+    }
+  }
+  return ranked[0] || null;
+}
+
 // -- scrobbling --------------------------------------------------------------
 
 async function send(session, settings) {
@@ -281,9 +312,19 @@ async function send(session, settings) {
     const statuses = new Set(results.map((r) => r.status));
     const ok = results.length > 0 && [...statuses].every((s) => s === "ok" || s === "already");
     if (ok) {
-      session.message = statuses.has("ok") ? "Marked watched on Bingers" : "Already marked on Bingers";
-      await store.addHistory(label, statuses.has("ok") ? "marked watched" : "already watched");
-      notify(`${label} marked watched`);
+      const outcome = markOutcome(results);
+      session.message = {
+        "already watched": "Already marked on Bingers",
+        "marked as a rewatch": "Marked on Bingers as a rewatch",
+      }[outcome] || "Marked watched on Bingers";
+      await store.addHistory(label, outcome);
+      const extra = await whatsNext(results, settings);
+      if (extra?.note && settings.upNext) session.message += `. ${extra.note}`;
+      notify(`${label} ${outcome}${extra?.note && settings.upNext ? `\n${extra.note}` : ""}`);
+      if (extra?.finished && extra.suggestions.length) {
+        notify(`You finished ${extra.show || label}! You might like: ${extra.suggestions.join(", ")}`);
+      }
+      chrome.storage.session.remove("watchlist").catch(() => {}); // the next episode moved
     } else {
       const detail = results.map(api.describeResult).join("; ") || "no result";
       session.state = "error";
@@ -308,6 +349,107 @@ async function send(session, settings) {
       notify(`${label}: ${session.message}`);
     }
   }
+}
+
+/** Next episode / finished show for the episode marked last; null for movies or when turned off. */
+async function whatsNext(results, settings) {
+  if (!settings.upNext && !settings.suggestions) return null;
+  const last = results[results.length - 1] || {};
+  const ref = last.title?.id;
+  const ep = last.episode || {};
+  if (!ref || !Number.isInteger(ep.season) || !Number.isInteger(ep.number)) return null;
+  return afterMark(api, settings.token, ref, ep.season, ep.number, { suggestions: settings.suggestions });
+}
+
+// -- the watch list and the weekly summary ------------------------------------------
+
+async function getWatchlist(refresh) {
+  const settings = await store.getSettings();
+  if (!settings.token) return { error: "Sign in to see your watch list." };
+  const { watchlist } = await chrome.storage.session.get("watchlist");
+  if (!refresh && watchlist && Date.now() - watchlist.at < WATCHLIST_FRESH_MS) return watchlist;
+  try {
+    const data = await api.watchlist(settings.token, 8);
+    const fresh = { at: Date.now(), items: watchItems(data), total: watchTotal(data) };
+    await chrome.storage.session.set({ watchlist: fresh });
+    return fresh;
+  } catch (err) {
+    return watchlist ? { ...watchlist, stale: true } : { error: err.message };
+  }
+}
+
+async function titleDetails(id) {
+  const settings = await store.getSettings();
+  if (!settings.token) return { error: "Sign in first." };
+  try {
+    const details = await api.title(settings.token, id);
+    return { where: whereToWatch(details), url: details.url || null };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function loadWeekly() {
+  const { weekly } = await chrome.storage.local.get("weekly");
+  return { cursor: null, rows: {}, titles: {}, lastShown: null, ...(weekly || {}) };
+}
+
+async function resetLibraryData() {
+  await chrome.storage.local.remove("weekly");
+  await chrome.storage.session.remove("watchlist").catch(() => {});
+}
+
+/** Bring the last few weeks of history up to date from Bingers' change feed. */
+async function syncWeekly(token) {
+  const weekly = await loadWeekly();
+  for (let i = 0; i < MAX_FEED_PAGES; i++) {
+    const page = await api.entries(token, weekly.cursor);
+    applyEntries(weekly.rows, page.items);
+    if (page.next_cursor) weekly.cursor = page.next_cursor;
+    if (!page.has_more) break;
+  }
+  applyEntries(weekly.rows, []); // drop rows older than the window
+  const wanted = new Set(Object.values(weekly.rows).map((r) => r.title));
+  const missing = [...wanted].filter((id) => !weekly.titles[id]);
+  for (let i = 0; i < missing.length; i += 100) {
+    for (const t of await api.titles(token, missing.slice(i, i + 100))) {
+      weekly.titles[String(t.id)] = { name: t.title || "?", runtime: t.runtime_minutes || 0 };
+    }
+  }
+  for (const id of Object.keys(weekly.titles)) if (!wanted.has(id)) delete weekly.titles[id];
+  await chrome.storage.local.set({ weekly });
+  return weekly;
+}
+
+async function getWeek() {
+  const settings = await store.getSettings();
+  if (!settings.token) return { error: "Sign in first." };
+  try {
+    const weekly = await syncWeekly(settings.token);
+    const [start, end] = weekBounds(new Date());
+    return { text: describeWeek(weekly.rows, weekly.titles, start, end, "This week so far").text };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+async function maybeWeeklySummary() {
+  const settings = await store.getSettings();
+  if (!settings.token || !settings.weeklySummary) return;
+  const now = new Date();
+  let weekly = await loadWeekly();
+  const week = dueWeek(now, weekly.lastShown);
+  if (!week) return;
+  if (!weekly.lastShown) {
+    // First run: start from here rather than greeting you with an old summary.
+    await chrome.storage.local.set({ weekly: { ...weekly, lastShown: weekKey(week) } });
+    return;
+  }
+  weekly = await syncWeekly(settings.token);
+  const label = week[1] > now ? "This week" : "Last week";
+  const { text, empty } = describeWeek(weekly.rows, weekly.titles, week[0], week[1], label);
+  await chrome.storage.local.set({ weekly: { ...weekly, lastShown: weekKey(week) } });
+  if (!empty) notify(text, { force: true });
 }
 
 // -- "Fix it": the user searches Bingers and picks the right title --------------------
@@ -415,6 +557,8 @@ async function checkToken(token) {
   if (!token) return { ok: false, error: "Paste your token first." };
   try {
     const account = api.displayName(await api.me(token));
+    const before = await store.getSettings();
+    if (before.account !== account) await resetLibraryData();
     await store.saveSettings({ token, account });
     flushBacklog().catch(() => {});
     return { ok: true, account };
@@ -454,9 +598,9 @@ function setBadge(tabId, session) {
   chrome.action.setBadgeBackgroundColor({ tabId, color }).catch(() => {});
 }
 
-async function notify(message) {
+async function notify(message, { force = false } = {}) {
   const settings = await store.getSettings();
-  if (!settings.notifications) return;
+  if (!settings.notifications && !force) return;
   chrome.notifications.create("", {
     type: "basic",
     iconUrl: chrome.runtime.getURL("icons/128.png"),
@@ -469,6 +613,7 @@ async function notify(message) {
 
 function ensureAlarm() {
   chrome.alarms.create("housekeeping", { periodInMinutes: 1 });
+  chrome.alarms.create("library", { delayInMinutes: 1, periodInMinutes: 30 });
 }
 
 chrome.runtime.onInstalled.addListener((details) => {
@@ -484,6 +629,10 @@ chrome.runtime.onStartup.addListener(() => {
 chrome.permissions.onRemoved.addListener(() => syncSites().catch(() => {}));
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === "library") {
+    await maybeWeeklySummary().catch((e) => console.info("Weekly summary skipped", e));
+    return;
+  }
   if (alarm.name !== "housekeeping") return;
   await loaded;
   const now = Date.now();

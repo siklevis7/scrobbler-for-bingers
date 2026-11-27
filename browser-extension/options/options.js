@@ -83,6 +83,13 @@ async function init() {
   threshold.value = String(s.threshold);
   $("minWatched").value = String(s.minWatchedMinutes);
   $("notifications").checked = s.notifications;
+  for (const key of ["upNext", "suggestions", "weeklySummary"]) {
+    $(key).checked = s[key] !== false;
+    $(key).addEventListener("change", async () => {
+      await saveSettings({ [key]: $(key).checked });
+      flash("Saved");
+    });
+  }
 
   const box = $("services");
   for (const [key, svc] of Object.entries(SERVICES)) {

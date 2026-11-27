@@ -103,6 +103,30 @@ def _with_anchor(root: tk.Tk, show: Any) -> Any:
         anchor.destroy()
 
 
+def message(
+    root: tk.Tk,
+    title: str,
+    text: str,
+    links: list[tuple[str, str]] | None = None,
+) -> None:
+    """A non-blocking window with some text, buttons that open web pages, and Close."""
+    win = tk.Toplevel(root)
+    win.title(f"{title} - {APP_TITLE}")
+    win.resizable(False, False)
+    frame = ttk.Frame(win, padding=18)
+    frame.pack(fill="both", expand=True)
+    ttk.Label(frame, text=title, font=("Segoe UI", 12, "bold")).pack(anchor="w")
+    ttk.Label(frame, text=text, wraplength=440, justify="left").pack(anchor="w", pady=(8, 0))
+    buttons = ttk.Frame(frame)
+    buttons.pack(fill="x", pady=(16, 0))
+    ttk.Button(buttons, text="Close", command=win.destroy).pack(side="right")
+    for label, url in reversed(links or []):
+        ttk.Button(buttons, text=label, command=lambda u=url: webbrowser.open(u)).pack(side="right", padx=(0, 8))
+    win.bind("<Escape>", lambda _e: win.destroy())
+    _bring_to_front(win)
+    win.after(300, lambda: win.attributes("-topmost", False))
+
+
 def show_history(root: tk.Tk, entries: list[dict[str, Any]], open_file: Any = None) -> None:
     win = tk.Toplevel(root)
     win.title(f"Watch history - {APP_TITLE}")

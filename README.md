@@ -192,22 +192,40 @@ themselves.
 ## Using it
 
 Just watch. The tray icon's tooltip and status show what's going on, for example
-"Watching Ozark S04E12". When an episode is marked, you get a notification.
+"Watching Ozark S04E12". When an episode is marked, you get a notification that also tells
+you what comes next:
+
+- *"Ozark S04E12 marked watched. Up next: S04E13 · A Hard Way to Go"*
+- *"…marked watched. Next episode, S02E05, airs on Friday"* when you're caught up
+- *"…marked as a rewatch"* when you've seen it before
+- After the last episode of a show that has ended: *"You finished Ozark! You might like: …"*,
+  with similar shows you haven't started
 
 Right-click the tray icon for the menu:
 
 | Menu | What it does |
 |---|---|
 | **Pause / Resume Tracking** | Stop marking things for a while. The icon turns grey while paused. |
+| **What to Watch** | Your Bingers watch list: the next episode of each show you're watching. Click one to see where it streams in your country, and to open it on Bingers. |
 | **Scrobbling > Retry Last Scrobble** | Send the last mark again. |
 | **Scrobbling > Sync Backlog Now** | Send marks saved while you were offline. |
 | **Scrobbling > Completion Threshold** | 65%, 80% (default), 90%, or a custom value. |
 | **Scrobbling > Notifications** | Turn the pop-ups on or off. |
 | **Scrobbling > Open Watch History** | Everything the app has marked. |
+| **Scrobbling > This Week's Summary** | How many episodes and movies you watched this week and last week, and for how long. |
+| **Scrobbling > Show Next Episode… / Suggest Shows… / Weekly Summary…** | Turn each of those extras on or off. |
 | **Bingers** | Shows who you're signed in as, plus Sign In, Change Token and Sign Out. |
 | **Players** | Turn VLC or mpv on or off, and set the VLC password. |
 | **Settings** | Start with Windows, open the settings file or the logs folder. |
-| **More** | Check for updates, project page, about. |
+| **Install Update (version)** | Shows up when a new version has been downloaded. See [Updates](#updates). |
+| **More** | Check for updates, turn automatic update checks on or off, project page, about. |
+
+### Weekly summary
+
+On Sunday evening (or the next time the app runs, if your computer was off) you get a
+notification like: *"This week: 14 episodes of 5 shows and 2 movies, about 13 h. Most watched:
+Dark Matter (2024) (5 episodes)."* It counts everything you marked on Bingers that week, by hand
+or in any app, not only what this app marked.
 
 ### How it decides something was watched
 
@@ -229,12 +247,38 @@ Right-click the tray icon for the menu:
 | `[Group] Frieren - 12 (1080p).mkv` | Episode 12 counted from the start; it finds the right season |
 | `Show\Season 1\03 - Pilot.mkv` | Uses the folder names when the file name alone is too short |
 | `Dune.Part.Two.2024.2160p.mkv`, `Se7en.1995.mkv` | Movies, with the year to tell remakes apart |
+| `Squid.Game.S02E01.mkv`, `La.Casa.De.Papel.S01E01.mkv` | Shows from other countries, by their English or original name |
+| `[Group] Frieren - 12.mkv` | Frieren: Beyond Journey's End (a missing subtitle is fine) |
 | `…sample.mkv`, `…trailer…mkv`, files under 4 minutes | Ignored |
 
 When Bingers has two shows with the same name, it picks the one whose year (or country)
-matches your file name. A year that's off by one also counts, because premiere dates differ
+matches your file name. If the file name has no year, it picks the one you already follow or
+have been watching on Bingers. A year that's off by one also counts, because premiere dates differ
 between databases. If the chosen show turns out not to have that episode, it tries the next
 best show automatically.
+
+### Updates
+
+The app looks for a new version by itself, a minute after it starts and then once a day.
+
+- **When there's a new version**, it downloads it in the background, then shows a
+  notification: *"Version … is ready."*
+- To install it: right-click the tray icon, and click **Install Update (…)** at the top of the
+  menu. Click **Yes**. The app closes for a few seconds, installs the new version, and starts
+  again by itself. You stay signed in, and your settings and history are kept.
+- **To check right now**: right-click the tray icon > **More > Check for Updates**. You get
+  *"You have the latest version"*, or it downloads the new one and asks whether to install it.
+- **To stop the daily check**: right-click > **More**, and untick **Check for Updates
+  Automatically**.
+
+Downloads come only from this project's GitHub releases, and the app checks each file against
+the checksum GitHub publishes before running it.
+
+If you use the portable version, the new zip is saved to your **Downloads** folder instead.
+Exit the app, then extract the zip over your old folder.
+
+Versions 0.4.2 and older can't update themselves: download the new installer once by hand
+(see [Step 1](#step-1-download-the-installer)), and later versions update on their own.
 
 ### When it picks the wrong show
 
@@ -327,8 +371,9 @@ extension's icon, then click **Settings**.
 3. Go back to the Settings page, paste the token into the box, and click **Save**.
 4. It says **"Signed in as"** followed by your Bingers name.
 
-On the same page you can choose the completion threshold, turn notifications on or off, and
-turn individual streaming services on or off.
+On the same page you can choose the completion threshold, turn notifications on or off, turn
+the extras on or off (next episode, suggestions when you finish a show, the Sunday summary),
+and turn individual streaming services on or off.
 
 ### Step 6: Watch something
 
@@ -350,6 +395,20 @@ What the icon shows:
 | green **✓** | Marked watched on Bingers |
 | orange **…** | Bingers wasn't reachable; it's saved and will be sent automatically |
 | red **!** | A problem: click the icon to see what happened |
+
+The notification also says what's next (*"Up next: S04E13"*, or when the next episode airs),
+says *"marked as a rewatch"* when you've seen it before, and suggests similar shows after the
+last episode of a show that has ended.
+
+### What to watch
+
+The extension's pop-up also shows **What to watch**: the next episode of each show on your
+Bingers watch list.
+
+- Click a show once to see where it streams in your country. Click it again to open it on
+  Bingers.
+- Click **Your week** for how much you watched this week. On Sunday evening you also get this
+  as a notification.
 
 ### When it can't tell what you're watching, or picks the wrong show
 
@@ -584,6 +643,9 @@ src/bingers_scrobbler/
   backlog.py      offline queue
   history.py      local watch history
   winutil.py      start with Windows, single instance
+  insights.py     next episode, finished shows, watch list, where to watch
+  stats.py        weekly summary from Bingers' history feed
+  updater.py      checks GitHub, downloads and starts the new installer
   icons.py        draws the app icon
   players/        VLC web interface, mpv JSON IPC
 packaging/        PyInstaller recipe and Inno Setup installer
@@ -600,7 +662,6 @@ browser-extension/
 ## Roadmap ideas
 
 - More players: MPC-HC/MPC-BE, PotPlayer, and a window-title fallback
-- Anime absolute numbering, through `/titles/{ref}/episodes`
 - Code signing, so Windows stops warning about the installer
 
 ## License

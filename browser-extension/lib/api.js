@@ -30,6 +30,9 @@ export async function request(token, method, path, { params, body } = {}, fetchI
   for (const [k, v] of Object.entries(params || {})) {
     if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, String(v));
   }
+  // Names in English. Without it Bingers answers with original names ("La casa de papel",
+  // "進撃の巨人"), which the English names on most sites never match. lang: "" turns it off.
+  if (method === "GET" && !(params && "lang" in params)) url.searchParams.set("lang", "en");
   const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
   if (body !== undefined) headers["Content-Type"] = "application/json";
 
@@ -62,6 +65,45 @@ export async function search(token, query, kind, f) {
   const data = await request(token, "GET", "/search", { params: { q: query, kind, limit: 10 } }, f);
   return data.items || [];
 }
+
+/** Search with titles in their own language, for pages that show the original name. */
+export async function searchOriginal(token, query, kind, f) {
+  const data = await request(token, "GET", "/search", { params: { q: query, kind, limit: 10, lang: "" } }, f);
+  return data.items || [];
+}
+
+/** Your status with up to 100 titles: { ref: { status, last_watched_at, furthest, title } }. */
+export async function check(token, refs, f) {
+  const list = [...new Set((refs || []).filter(Boolean))].slice(0, 100);
+  if (!list.length) return {};
+  const data = await request(token, "GET", "/library/check", { params: { titles: list.join(",") } }, f);
+  return Object.fromEntries((data.items || []).map((i) => [String(i.ref), i]));
+}
+
+/** One title, with where to watch it in your country. */
+export const title = (token, ref, f) => request(token, "GET", `/titles/${encodeURIComponent(ref)}`, {}, f);
+
+/** Catalog details for up to 100 titles. */
+export async function titles(token, ids, f) {
+  const list = [...new Set((ids || []).filter(Boolean))].slice(0, 100);
+  if (!list.length) return [];
+  const data = await request(token, "GET", "/titles", { params: { ids: list.join(",") } }, f);
+  return data.items || [];
+}
+
+/** Titles like this one, minus what's already in your library. */
+export async function similar(token, ref, limit = 3, f) {
+  const params = { title: ref, exclude_library: "true", limit };
+  const data = await request(token, "GET", "/similar", { params }, f);
+  return data.items || [];
+}
+
+/** The watch list as the app shows it: { sections: { watch_next: { count, items }, … } }. */
+export const watchlist = (token, limit = 10, f) => request(token, "GET", "/watchlist", { params: { limit } }, f);
+
+/** Change feed of the watch history; always pass back next_cursor. */
+export const entries = (token, cursor, f) =>
+  request(token, "GET", "/entries", { params: { cursor: cursor || undefined, limit: 10000 } }, f);
 
 /** A show's episodes: [{ id, season, number, title, aired_at }]. */
 export async function episodes(token, ref, season, f) {

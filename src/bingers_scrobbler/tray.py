@@ -10,6 +10,7 @@ Menu clicks arrive on the icon thread and hand any window work to the main threa
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta
 import json
 import logging
 import queue
@@ -17,6 +18,7 @@ import sys
 import threading
 import tkinter as tk
 import webbrowser
+from pathlib import Path
 from typing import Callable
 
 import pystray
@@ -24,7 +26,7 @@ from PIL import ImageTk
 from pystray import Menu
 from pystray import MenuItem as Item
 
-from . import __version__, dialogs, winutil
+from . import __version__, dialogs, insights, updater, winutil
 from .api import AuthError, BingersClient, BingersError, TransientError, display_name
 from .backlog import Backlog
 from .config import app_dir, config_path, delete_token, load_config, load_token, save_token, set_value
@@ -33,9 +35,11 @@ from .icons import load_icon
 from .logs import logs_dir, setup_logging
 from .matcher import Matcher
 from .players import build_players
+from .stats import WatchStats, due_week, week_bounds
 from .tracker import (
     EVENT_AUTH,
     EVENT_ERROR,
+    EVENT_FINISHED,
     EVENT_QUEUED,
     EVENT_SCROBBLED,
     EVENT_UNMATCHED,
@@ -48,6 +52,11 @@ APP_TITLE = dialogs.APP_TITLE
 REPO_URL = "https://github.com/siklevis7/scrobbler-for-bingers"
 TOKEN_URL = "https://bingers.app/integrations"
 PRESET_THRESHOLDS = (65, 80, 90)
+UPDATE_FIRST_CHECK_MS = 60 * 1000  # a minute after start, so start-up stays quick
+UPDATE_INTERVAL_MS = 24 * 60 * 60 * 1000
+LIBRARY_REFRESH_MS = 30 * 60 * 1000  # the watch list and the weekly summary check
+WATCH_SECTIONS = ("watch_next", "collecting_dust")
+WATCH_MENU_SIZE = 12
 
 VLC_HELP = (
     "To let the scrobbler see what VLC is playing, turn on VLC's web interface:\n\n"
@@ -99,6 +108,14 @@ class TrayApp:
         self.stop_event = threading.Event()
         self.account: str | None = None
         self.problem: str | None = None  # shown as the status while something needs attention
+        self.update_release: updater.Release | None = None
+        self.update_file: Path | None = None  # a downloaded installer waiting to be run
+        self.update_busy = threading.Lock()
+        self.watch: list[insights.WatchItem] = []  # "What to Watch", refreshed in the background
+        self.watch_total = 0
+        self.watch_loaded = False
+        self.library_busy = threading.Lock()
+        self.stats = WatchStats(data / "weekly_stats.json")
 
         self.ui_queue: queue.Queue[Callable[[], None]] = queue.Queue()
         self.root = tk.Tk()
@@ -116,6 +133,12 @@ class TrayApp:
         threading.Thread(target=self.icon.run, name="tray-icon", daemon=True).start()
         self.root.after(100, self._pump)
         self.root.after(5000, self._refresh)
+        self.root.after(UPDATE_FIRST_CHECK_MS, self._auto_update_tick)
+        self.root.after(20 * 1000, self._library_tick)
+        old = updater.note_version(app_dir() / "app_state.json")
+        if old:
+            log.info("Updated from %s to %s", old, __version__)
+            self.root.after(3000, lambda: self._notify(f"Updated to version {__version__}.", force=True))
         if load_token():
             self._start_tracker()
         else:
@@ -204,6 +227,8 @@ class TrayApp:
             history=self.history,
             on_event=self._on_event,
         )
+        self.tracker.up_next = self.config.app.up_next
+        self.tracker.suggest = self.config.app.suggestions
         self._update_icon()
         log.info("Tracking started (threshold %.0f%%)", self.config.scrobble.threshold)
         self.tracker.run_forever(stop)
@@ -211,15 +236,21 @@ class TrayApp:
     def _on_event(self, kind: str, message: str) -> None:
         if kind == EVENT_AUTH:
             self.problem = "Token refused - sign in again"
-        if kind in (EVENT_SCROBBLED, EVENT_QUEUED, EVENT_UNMATCHED, EVENT_ERROR, EVENT_AUTH):
+        if kind in (EVENT_SCROBBLED, EVENT_QUEUED, EVENT_UNMATCHED, EVENT_ERROR, EVENT_AUTH, EVENT_FINISHED):
             self._notify(message)
+        if kind == EVENT_SCROBBLED:
+            self._start_library_refresh(summary=False)  # the next episode moved
         self._update_icon()
 
-    def _notify(self, message: str) -> None:
-        if not self.config.app.notifications:
+    def _notify(self, message: str, force: bool = False) -> None:
+        """Show a Windows notification. `force` shows it even when notifications are off
+        (for answers to something the user just asked for)."""
+        if not (self.config.app.notifications or force):
             return
         try:
-            self.icon.notify(message, APP_TITLE)
+            # Windows cuts notifications at 255 characters; end with an ellipsis instead.
+            text = message if len(message) <= 250 else message[:247].rstrip() + "..."
+            self.icon.notify(text, APP_TITLE)
         except Exception:
             log.debug("Notification failed", exc_info=True)
 
@@ -257,12 +288,18 @@ class TrayApp:
         return Menu(
             Item(APP_TITLE, None, enabled=False),
             Item(lambda _i: f"Status: {self._status()}", None, enabled=False),
+            Item(
+                lambda _i: f"Install Update ({self.update_release.version})" if self.update_release else "Install Update",
+                lambda: self._ui(self._install_update),
+                visible=lambda _i: self.update_file is not None,
+            ),
             Menu.SEPARATOR,
             Item(
                 lambda _i: "Resume Tracking" if self.tracker and self.tracker.paused else "Pause Tracking",
                 self._toggle_pause,
                 enabled=lambda _i: self.tracker is not None,
             ),
+            Item("What to Watch", Menu(self._watch_menu_items)),
             Item(
                 "Scrobbling",
                 Menu(
@@ -296,6 +333,23 @@ class TrayApp:
                         checked=lambda _i: self.config.app.notifications,
                     ),
                     Item("Open Watch History", lambda: self._ui(self._show_history)),
+                    Item("This Week's Summary", self._show_week),
+                    Menu.SEPARATOR,
+                    Item(
+                        "Show Next Episode After a Mark",
+                        lambda: self._toggle_app("up_next"),
+                        checked=lambda _i: self.config.app.up_next,
+                    ),
+                    Item(
+                        "Suggest Shows When I Finish One",
+                        lambda: self._toggle_app("suggestions"),
+                        checked=lambda _i: self.config.app.suggestions,
+                    ),
+                    Item(
+                        "Weekly Summary on Sundays",
+                        lambda: self._toggle_app("weekly_summary"),
+                        checked=lambda _i: self.config.app.weekly_summary,
+                    ),
                 ),
             ),
             Item(
@@ -343,7 +397,17 @@ class TrayApp:
             Item(
                 "More",
                 Menu(
-                    Item("Check for Updates", lambda: webbrowser.open(f"{REPO_URL}/releases/latest")),
+                    Item(
+                        lambda _i: "Checking for Updates..." if self.update_busy.locked() else "Check for Updates",
+                        lambda: self._start_update_check(manual=True),
+                        enabled=lambda _i: not self.update_busy.locked(),
+                    ),
+                    Item(
+                        "Check for Updates Automatically",
+                        self._toggle_check_updates,
+                        checked=lambda _i: self.config.app.check_updates,
+                    ),
+                    Menu.SEPARATOR,
                     Item("Project Page", lambda: webbrowser.open(REPO_URL)),
                     Item("About", lambda: self._ui(self._about)),
                 ),
@@ -387,6 +451,235 @@ class TrayApp:
         self.config.app.notifications = not self.config.app.notifications
         set_value("app", "notifications", self.config.app.notifications)
         self._update_icon()
+
+    def _toggle_app(self, key: str) -> None:
+        value = not getattr(self.config.app, key)
+        setattr(self.config.app, key, value)
+        set_value("app", key, value)
+        if self.tracker:
+            self.tracker.up_next = self.config.app.up_next
+            self.tracker.suggest = self.config.app.suggestions
+        self._update_icon()
+
+    # -- what to watch and the weekly summary ------------------------------------
+
+    def _watch_menu_items(self) -> list[Item]:
+        """Built each time the menu opens, from the list fetched in the background."""
+        if not load_token():
+            return [Item("Sign in to see your watch list", None, enabled=False)]
+        if not self.watch_loaded:
+            return [Item("Loading your watch list...", None, enabled=False)]
+        items: list[Item] = []
+        if not self.watch:
+            items.append(Item("Nothing waiting: you're all caught up", None, enabled=False))
+        for entry in self.watch:
+            items.append(Item(entry.label(), self._watch_action(entry)))
+        if self.watch_total > len(self.watch):
+            items.append(Item(f"...and {self.watch_total - len(self.watch)} more", None, enabled=False))
+        items += [
+            Menu.SEPARATOR,
+            Item("Open Bingers", lambda: webbrowser.open("https://bingers.app")),
+            Item("Refresh", lambda: self._start_library_refresh(summary=False)),
+        ]
+        return items
+
+    def _watch_action(self, entry: insights.WatchItem) -> Callable[[], None]:
+        return lambda: self._start_watch_details(entry)
+
+    def _library_tick(self) -> None:
+        self._start_library_refresh(summary=True)
+        self.root.after(LIBRARY_REFRESH_MS, self._library_tick)
+
+    def _start_library_refresh(self, summary: bool) -> None:
+        threading.Thread(target=self._library_refresh, args=(summary,), name="library", daemon=True).start()
+
+    def _library_refresh(self, summary: bool) -> None:
+        """Runs on its own thread: fetch the watch list; on schedule, the weekly summary."""
+        client = self.client
+        if client is None or not self.library_busy.acquire(blocking=False):
+            return
+        try:
+            try:
+                data = client.watchlist(limit=WATCH_MENU_SIZE)
+                self.watch = insights.watch_items(data, WATCH_SECTIONS, WATCH_MENU_SIZE)
+                sections = data.get("sections") or {}
+                self.watch_total = sum(int((sections.get(k) or {}).get("count") or 0) for k in WATCH_SECTIONS)
+                self.watch_loaded = True
+            except BingersError as exc:
+                log.info("Couldn't load the watch list (%s)", exc)
+            if summary and self.config.app.weekly_summary:
+                self._maybe_weekly_summary(client)
+        except Exception:
+            log.exception("Library refresh failed")
+        finally:
+            self.library_busy.release()
+            self._update_icon()
+
+    def _maybe_weekly_summary(self, client: BingersClient) -> None:
+        now = datetime.now().astimezone()
+        week = due_week(now, self.stats.last_shown)
+        if week is None:
+            return
+        if self.stats.last_shown is None and week[1] <= now - timedelta(days=1):
+            # First run: start from this week rather than greeting you with an old summary.
+            self.stats.last_shown = week[0].date().isoformat()
+            self.stats.save()
+            return
+        try:
+            self.stats.sync(client)
+        except BingersError as exc:
+            log.info("Couldn't load your history for the weekly summary (%s)", exc)
+            return
+        start, end = week
+        title = "This week" if end > now else "Last week"
+        text = self.stats.describe(start, end, title)
+        self.stats.last_shown = start.date().isoformat()
+        self.stats.save()
+        log.info("Weekly summary: %s", text.replace("\n", " "))
+        if not self.stats.summary(start, end).empty:
+            self._notify(text, force=True)
+
+    def _show_week(self) -> None:
+        client = self.client
+        if client is None:
+            self._ui(lambda: dialogs.info(self.root, "Sign in first to see your weekly summary."))
+            return
+
+        def work() -> None:
+            try:
+                with self.library_busy:
+                    self.stats.sync(client)
+                now = datetime.now().astimezone()
+                start, end = week_bounds(now)
+                text = (
+                    self.stats.describe(start, end, "This week so far")
+                    + "\n\n"
+                    + self.stats.describe(start - timedelta(days=7), start, "Last week")
+                )
+            except BingersError as exc:
+                text = f"Couldn't load your history from Bingers right now:\n{exc}"
+            self._ui(lambda: dialogs.message(self.root, "Your week", text))
+
+        threading.Thread(target=work, name="weekly", daemon=True).start()
+
+    def _start_watch_details(self, entry: insights.WatchItem) -> None:
+        client = self.client
+
+        def work() -> None:
+            lines = []
+            if entry.next_code:
+                nxt = f"Next: {entry.next_code}" + (f" · {entry.next_title}" if entry.next_title else "")
+                if entry.next_aired:
+                    nxt += f" (aired {entry.next_aired[:10]})"
+                lines.append(nxt)
+            try:
+                details = client.title(entry.id) if client else {}
+                where = insights.where_to_watch(details)
+                lines.append(where or "No streaming info for your country.")
+                overview = str(details.get("overview") or "").strip()
+                if overview:
+                    lines.append("")
+                    lines.append(overview[:400] + ("..." if len(overview) > 400 else ""))
+            except BingersError as exc:
+                lines.append(f"(Couldn't load where to watch it: {exc})")
+            links = [("Open on Bingers", entry.url)] if entry.url else []
+            self._ui(lambda: dialogs.message(self.root, entry.name, "\n".join(lines), links))
+
+        threading.Thread(target=work, name="watch-details", daemon=True).start()
+
+    def _toggle_check_updates(self) -> None:
+        self.config.app.check_updates = not self.config.app.check_updates
+        set_value("app", "check_updates", self.config.app.check_updates)
+        self._update_icon()
+
+    # -- updates -------------------------------------------------------------
+
+    def _auto_update_tick(self) -> None:
+        if self.config.app.check_updates and self.update_file is None:
+            self._start_update_check(manual=False)
+        self.root.after(UPDATE_INTERVAL_MS, self._auto_update_tick)
+
+    def _start_update_check(self, manual: bool) -> None:
+        if self.update_busy.locked():
+            return
+        threading.Thread(target=self._update_check, args=(manual,), name="update-check", daemon=True).start()
+
+    def _update_check(self, manual: bool) -> None:
+        """Runs on its own thread: ask GitHub, download if newer, then offer to install."""
+        if not self.update_busy.acquire(blocking=False):
+            return
+        try:
+            self._run_update_check(manual)
+        except Exception:
+            log.exception("Update check crashed")
+        finally:
+            self.update_busy.release()
+            self._update_icon()
+
+    def _run_update_check(self, manual: bool) -> None:
+        mode = updater.install_mode()
+        try:
+            release = updater.check_latest(mode=mode)
+        except updater.UpdateError as exc:
+            log.warning("Update check failed: %s", exc)
+            if manual:
+                self._ui(lambda: self._update_failed(f"Couldn't check for updates:\n{exc}"))
+            return
+
+        if not updater.is_newer(release.version):
+            log.info("Update check: %s is the latest version", __version__)
+            if manual:
+                self._notify(f"You have the latest version ({__version__}).", force=True)
+            return
+
+        log.info("Update check: version %s is available (%s copy)", release.version, mode)
+        self.update_release = release
+
+        if mode == updater.MODE_SOURCE:
+            self._notify(
+                f"Version {release.version} is out. You're running from source: "
+                "update with git pull, then pip install -e .",
+                force=manual,
+            )
+            if manual:
+                webbrowser.open(release.page_url)
+            return
+
+        self._notify(f"Version {release.version} is out. Downloading it now...", force=manual)
+        folder = updater.downloads_dir() if mode == updater.MODE_PORTABLE else app_dir() / "updates"
+        try:
+            path = updater.download(release, folder)
+        except updater.UpdateError as exc:
+            log.warning("Update download failed: %s", exc)
+            if manual:
+                self._ui(lambda: self._update_failed(f"Couldn't download version {release.version}:\n{exc}"))
+            else:
+                self._notify(
+                    f"Version {release.version} is out, but the download failed. "
+                    "Try More > Check for Updates."
+                )
+            return
+        log.info("Downloaded %s", path)
+
+        if mode == updater.MODE_PORTABLE:
+            self._notify(
+                f"Version {release.version} was saved to your Downloads folder as {path.name}. "
+                "Exit the scrobbler, then unzip it over your current copy.",
+                force=True,
+            )
+            winutil.open_path(path.parent)
+            return
+
+        updater.clean_old(folder, keep=path)
+        self.update_file = path
+        self._update_icon()
+        if manual:
+            self._ui(self._install_update)
+        else:
+            self._notify(
+                f"Version {release.version} is ready. Right-click the tray icon and choose Install Update.",
+                force=True,
+            )
 
     def _toggle_vlc(self) -> None:
         self.config.vlc.enabled = not self.config.vlc.enabled
@@ -461,6 +754,9 @@ class TrayApp:
                 dialogs.error(self.root, f"Couldn't check the token right now:\n{exc}")
                 return False
             save_token(token)
+            self.stats.path.unlink(missing_ok=True)
+            self.stats = WatchStats(self.stats.path)
+            self.watch, self.watch_loaded = [], False
             self.account = display_name(me)
             self.problem = None
             dialogs.info(self.root, f"Signed in as {self.account}.")
@@ -523,6 +819,40 @@ class TrayApp:
             self.history.recent(300),
             open_file=lambda: winutil.open_path(self.history.path) if self.history.path.exists() else None,
         )
+
+    def _update_failed(self, message: str) -> None:
+        if dialogs.confirm(self.root, f"{message}\n\nOpen the download page instead?"):
+            webbrowser.open(updater.RELEASES_PAGE)
+
+    def _install_update(self) -> None:
+        path, release = self.update_file, self.update_release
+        if path is None or release is None:
+            return
+        if not path.exists():  # cleaned up meanwhile: fetch it again
+            self.update_file = None
+            self._start_update_check(manual=True)
+            return
+        watching = self.tracker.now_playing if self.tracker else None
+        message = (
+            f"Version {release.version} is downloaded (you have {__version__}).\n\n"
+            "Install it now? The scrobbler closes for a few seconds and starts again by itself. "
+            "Your sign-in, settings and history are kept."
+        )
+        if watching:
+            message += (
+                f"\n\nYou're watching {watching}. Its progress so far will be lost, so you may "
+                "prefer to install when it's done (Install Update stays in the menu)."
+            )
+        if not dialogs.confirm(self.root, message):
+            return
+        try:
+            updater.start_installer(path)
+        except OSError as exc:
+            log.error("Couldn't start the installer: %s", exc)
+            dialogs.error(self.root, f"Couldn't start the installer:\n{exc}\n\nIt's saved at:\n{path}")
+            return
+        log.info("Installer started; exiting so it can replace the files")
+        self._exit()
 
     def _about(self) -> None:
         dialogs.info(

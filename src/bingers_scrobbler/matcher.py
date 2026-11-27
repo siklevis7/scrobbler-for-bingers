@@ -20,6 +20,11 @@ log = logging.getLogger(__name__)
 MIN_SIMILARITY = 0.85
 CACHE_VERSION = 2  # bump to forget matches saved by older, less careful versions
 MAX_ALTERNATES = 3
+# When the best two fits are this close, ask Bingers which ones you follow and prefer those.
+LIBRARY_MARGIN = 0.35
+WATCHED_BONUS = 0.3  # you've watched some of it
+FOLLOWED_BONUS = 0.15  # it's in your library
+_NOT_FOLLOWED = {None, "", "not_in_library", "none"}
 
 _NUMBER_WORDS = {
     "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
@@ -57,7 +62,23 @@ def split_tag(name: str) -> tuple[str, str | None]:
     return name[: m.start()], m.group("tag").upper()
 
 
-def _score(media: ParsedMedia, candidate: dict[str, Any]) -> float | None:
+def _head(name: str) -> str:
+    """The part before a colon: 'Frieren: Beyond Journey's End' -> 'frieren'."""
+    base, _ = split_tag(name or "")
+    return normalize(base.split(":", 1)[0]) if ":" in base else ""
+
+
+def _shared_heads(candidates: list[dict[str, Any]]) -> set[str]:
+    """Prefixes several results share ("Star Wars: …"): too vague to match a bare name."""
+    counts: dict[str, int] = {}
+    for c in candidates:
+        h = _head(c.get("title") or "")
+        if h:
+            counts[h] = counts.get(h, 0) + 1
+    return {h for h, n in counts.items() if n > 1}
+
+
+def _score(media: ParsedMedia, candidate: dict[str, Any], shared: frozenset[str] | set[str] = frozenset()) -> float | None:
     """How well a search result fits the file name; None if it doesn't fit at all."""
     want_kind = "show" if media.kind == "episode" else "movie"
     if candidate.get("kind") != want_kind:
@@ -72,6 +93,12 @@ def _score(media: ParsedMedia, candidate: dict[str, Any]) -> float | None:
         tag = tag or t
         best_sim = max(best_sim, SequenceMatcher(None, target, normalize(base)).ratio())
         best_sim = max(best_sim, SequenceMatcher(None, target, normalize(name)).ratio())
+        # Files often drop the subtitle: "Frieren" for "Frieren: Beyond Journey's End".
+        # Slightly below an exact name, so "Attack on Titan" still beats "Attack on Titan: Junior High".
+        if ":" in base:
+            head = normalize(base.split(":", 1)[0])
+            if head and head not in shared:
+                best_sim = max(best_sim, 0.95 * SequenceMatcher(None, target, head).ratio())
     if best_sim < MIN_SIMILARITY:
         return None
 
@@ -94,11 +121,42 @@ def _score(media: ParsedMedia, candidate: dict[str, Any]) -> float | None:
     return score
 
 
-def rank_candidates(media: ParsedMedia, candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Search results that fit, best first. Ties keep the API's own order."""
-    scored = [(s, i, c) for i, c in enumerate(candidates) if (s := _score(media, c)) is not None]
+def rank_candidates(
+    media: ParsedMedia,
+    candidates: list[dict[str, Any]],
+    library: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
+    """Search results that fit, best first. Ties keep the API's own order.
+
+    `library` is GET /library/check's answer for some of them: shows you follow, and above all
+    shows you've watched, get a small bonus, enough to break a tie between same-name titles
+    but not enough to beat a year that clearly matches.
+    """
+    shared = _shared_heads(candidates)
+    scored = [(s, i, c) for i, c in enumerate(candidates) if (s := _score(media, c, shared)) is not None]
+    if library:
+        scored = [(s + library_bonus(library.get(c.get("id"))), i, c) for s, i, c in scored]
     scored.sort(key=lambda x: (-x[0], x[1]))
     return [c for _, _, c in scored]
+
+
+def library_bonus(entry: dict[str, Any] | None) -> float:
+    if not entry:
+        return 0.0
+    if entry.get("last_watched_at") or entry.get("furthest"):
+        return WATCHED_BONUS
+    if entry.get("status") not in _NOT_FOLLOWED:
+        return FOLLOWED_BONUS
+    return 0.0
+
+
+def is_close_call(media: ParsedMedia, ranked: list[dict[str, Any]]) -> bool:
+    """True when the top two fits are near enough that your library should decide."""
+    if len(ranked) < 2:
+        return False
+    shared = _shared_heads(ranked)
+    first, second = _score(media, ranked[0], shared), _score(media, ranked[1], shared)
+    return first is not None and second is not None and first - second <= LIBRARY_MARGIN
 
 
 def pick_best(media: ParsedMedia, candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -152,11 +210,33 @@ class Matcher:
             seen = {c.get("id") for c in results}
             ranked = rank_candidates(media, results + [c for c in more if c.get("id") not in seen])
         if not ranked:
+            # A file named in the show's own language ("La.Casa.De.Papel.S01E01"): Bingers
+            # answers in English by default, so look again with original names.
+            try:
+                local = self.client.search(media.title, kind=kind, limit=20, original_names=True)
+            except TypeError:  # a client without that option
+                local = []
+            ranked = rank_candidates(media, local)
+        if not ranked:
             return []
+        if is_close_call(media, ranked):
+            ranked = self._prefer_library(media, ranked)
         matches = [_to_match(c, media.title) for c in ranked[: 1 + MAX_ALTERNATES]]
         self._cache[cache_key] = {"matches": [asdict(m) for m in matches]}
         self._save()
         return matches
+
+    def _prefer_library(self, media: ParsedMedia, ranked: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        top = ranked[: 1 + MAX_ALTERNATES]
+        try:
+            library = self.client.check([c["id"] for c in top if c.get("id")])
+        except Exception as exc:  # only a tie-breaker: carry on without it
+            log.info("  couldn't check your library (%s)", exc)
+            return ranked
+        reordered = rank_candidates(media, top, library)
+        if reordered and reordered[0] is not top[0]:
+            log.info("  preferring %s, which is in your library", reordered[0].get("title"))
+        return reordered + ranked[len(top):]
 
     def _load(self) -> dict[str, dict[str, Any]]:
         if not self.cache_path.exists():

@@ -318,6 +318,63 @@ $("markNow").addEventListener("click", async () => {
 
 const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
 await setupSiteCard(activeTab);
+// -- What to watch ------------------------------------------------------------
+
+async function loadWatchlist() {
+  const res = await chrome.runtime.sendMessage({ type: "getWatchlist" });
+  if (!res || res.error) return; // signed out or offline: the card stays hidden
+  const list = $("watchList");
+  list.replaceChildren();
+  if (!res.items.length) {
+    const p = document.createElement("p");
+    p.className = "small muted";
+    p.style.margin = "4px 0 0";
+    p.textContent = "Nothing waiting: you're all caught up.";
+    list.append(p);
+  }
+  for (const item of res.items) {
+    const btn = document.createElement("button");
+    btn.className = "watch";
+    const name = document.createElement("b");
+    name.textContent = item.name;
+    const next = document.createElement("small");
+    next.textContent = item.next ? `${item.next}${item.nextTitle ? ` · ${item.nextTitle}` : ""}` : "Not started";
+    const where = document.createElement("small");
+    where.className = "where";
+    where.hidden = true;
+    btn.append(name, next, where);
+    btn.title = "Click: where to watch it. Click again: open it on Bingers.";
+    btn.addEventListener("click", async () => {
+      if (!where.hidden) {
+        if (item.url) chrome.tabs.create({ url: item.url });
+        return;
+      }
+      where.hidden = false;
+      where.textContent = "Looking up where to watch it…";
+      const d = await chrome.runtime.sendMessage({ type: "titleDetails", id: item.id });
+      where.textContent = d.error
+        ? `Couldn't load it: ${d.error}`
+        : `${d.where || "No streaming info for your country."} Click again to open it on Bingers.`;
+    });
+    list.append(btn);
+  }
+  const more = res.total - res.items.length;
+  $("watchMore").hidden = more <= 0;
+  $("watchMore").textContent = `…and ${more} more on Bingers.`;
+  $("watchCard").hidden = false;
+}
+
+$("weekLink").addEventListener("click", async (e) => {
+  e.preventDefault();
+  const box = $("weekText");
+  box.hidden = false;
+  box.textContent = "Adding up your week…";
+  const res = await chrome.runtime.sendMessage({ type: "getWeek" });
+  box.textContent = res.error ? `Couldn't load it: ${res.error}` : res.text;
+});
+
+loadWatchlist().catch(() => {});
+
 currentTab = await render();
 setInterval(async () => {
   currentTab = await render();

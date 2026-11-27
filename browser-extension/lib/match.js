@@ -52,31 +52,82 @@ export function splitTag(name) {
   return m ? [name.slice(0, m.index), m[1].toUpperCase()] : [name || "", null];
 }
 
-/** Search results that fit what the page shows, best first (ties keep the API's order). */
-export function rankCandidates(media, candidates) {
+// Same-name titles: a show you follow, and above all one you've watched, wins a close call.
+export const LIBRARY_MARGIN = 0.35;
+const WATCHED_BONUS = 0.3;
+const FOLLOWED_BONUS = 0.15;
+const NOT_FOLLOWED = new Set([undefined, null, "", "not_in_library", "none"]);
+
+export function libraryBonus(entry) {
+  if (!entry) return 0;
+  if (entry.last_watched_at || entry.furthest) return WATCHED_BONUS;
+  return NOT_FOLLOWED.has(entry.status) ? 0 : FOLLOWED_BONUS;
+}
+
+/** The part before a colon: "Frieren: Beyond Journey's End" -> "frieren". */
+function head(name) {
+  const [base] = splitTag(name || "");
+  return base.includes(":") ? normalize(base.split(":")[0]) : "";
+}
+
+/** Prefixes several results share ("Star Wars: …"): too vague to match a bare name. */
+function sharedHeads(candidates) {
+  const counts = {};
+  for (const c of candidates || []) {
+    const h = head(c.title);
+    if (h) counts[h] = (counts[h] || 0) + 1;
+  }
+  return new Set(Object.keys(counts).filter((h) => counts[h] > 1));
+}
+
+function scoreOf(media, c, shared) {
   const wantKind = media.kind === "episode" ? "show" : "movie";
+  if (c.kind !== wantKind) return null;
   const target = normalize(media.title);
+  let sim = 0;
+  let tag = null;
+  for (const name of [c.title, c.original_title].filter(Boolean)) {
+    const [base, t] = splitTag(name);
+    tag = tag || t;
+    sim = Math.max(sim, similarity(target, normalize(base)), similarity(target, normalize(name)));
+    // Pages often drop the subtitle: "Frieren" for "Frieren: Beyond Journey's End".
+    const h = head(name);
+    if (h && !shared.has(h)) sim = Math.max(sim, 0.95 * similarity(target, h));
+  }
+  if (sim < MIN_SIMILARITY) return null;
+  let score = sim;
+  const year = Number.isInteger(c.year) ? c.year : tag && /^\d{4}$/.test(tag) ? Number(tag) : null;
+  if (media.year && year) {
+    const diff = Math.abs(year - media.year);
+    if (diff === 0) score += 0.5;
+    else if (diff === 1) score += 0.3; // premiered in December, listed as January, and the like
+    else if (wantKind === "movie") return null; // a remake or a different film with the same name
+    else score -= 0.6; // a different show with the same name (a 1968 one vs 2020)
+  }
+  if (media.country && COUNTRIES.has(tag)) score += tag === media.country ? 0.3 : -0.3;
+  return score;
+}
+
+/** True when the top two fits are near enough that your library should decide. */
+export function isCloseCall(media, ranked) {
+  if (!ranked || ranked.length < 2) return false;
+  const shared = sharedHeads(ranked);
+  const a = scoreOf(media, ranked[0], shared);
+  const b = scoreOf(media, ranked[1], shared);
+  return a !== null && b !== null && a - b <= LIBRARY_MARGIN;
+}
+
+/**
+ * Search results that fit what the page shows, best first (ties keep the API's order).
+ * `library` is GET /library/check's answer: { id: entry } for some of them.
+ */
+export function rankCandidates(media, candidates, library = null) {
+  const shared = sharedHeads(candidates);
   const scored = [];
   (candidates || []).forEach((c, index) => {
-    if (c.kind !== wantKind) return;
-    let sim = 0;
-    let tag = null;
-    for (const name of [c.title, c.original_title].filter(Boolean)) {
-      const [base, t] = splitTag(name);
-      tag = tag || t;
-      sim = Math.max(sim, similarity(target, normalize(base)), similarity(target, normalize(name)));
-    }
-    if (sim < MIN_SIMILARITY) return;
-    let score = sim;
-    const year = Number.isInteger(c.year) ? c.year : tag && /^\d{4}$/.test(tag) ? Number(tag) : null;
-    if (media.year && year) {
-      const diff = Math.abs(year - media.year);
-      if (diff === 0) score += 0.5;
-      else if (diff === 1) score += 0.3; // premiered in December, listed as January, and the like
-      else if (wantKind === "movie") return; // a remake or a different film with the same name
-      else score -= 0.6; // a different show with the same name (a 1968 one vs 2020)
-    }
-    if (media.country && COUNTRIES.has(tag)) score += tag === media.country ? 0.3 : -0.3;
+    let score = scoreOf(media, c, shared);
+    if (score === null) return;
+    if (library) score += libraryBonus(library[c.id]);
     scored.push({ score, index, c });
   });
   scored.sort((a, b) => b.score - a.score || a.index - b.index);

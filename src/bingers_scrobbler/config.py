@@ -45,6 +45,14 @@ DEFAULT_CONFIG = """\
 [app]
 # Show a Windows notification when something is marked watched.
 notifications = true
+# Look for a new version once a day and download it in the background.
+check_updates = true
+# After a mark, add the next episode (or when it airs) to the notification.
+up_next = true
+# After the last episode of a show, suggest a few similar ones.
+suggestions = true
+# On Sunday evening, show what you watched this week.
+weekly_summary = true
 
 [scrobble]
 # How far into a file (percent) you must get before it counts as watched.
@@ -79,6 +87,10 @@ ipc_path = '{mpv_ipc}'
 @dataclass
 class AppSettings:
     notifications: bool = True
+    check_updates: bool = True
+    up_next: bool = True
+    suggestions: bool = True
+    weekly_summary: bool = True
 
 
 @dataclass

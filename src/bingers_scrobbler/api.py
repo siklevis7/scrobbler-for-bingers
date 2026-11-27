@@ -43,7 +43,11 @@ class BingersClient:
         base_url: str = BASE_URL,
         timeout: float = 15.0,
         session: requests.Session | None = None,
+        lang: str = "en",
     ):
+        # Names come back in this language. Without it Bingers answers with original names
+        # ("La casa de papel", "進撃の巨人"), which file names in English never match.
+        self.lang = lang
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.session = session or requests.Session()
@@ -60,8 +64,13 @@ class BingersClient:
     def me(self) -> dict[str, Any]:
         return self._request("GET", "/me")
 
-    def search(self, query: str, kind: str | None = None, limit: int = 10) -> list[dict[str, Any]]:
+    def search(
+        self, query: str, kind: str | None = None, limit: int = 10, original_names: bool = False
+    ) -> list[dict[str, Any]]:
+        """Search by name. original_names=True returns titles in their own language instead."""
         params: dict[str, Any] = {"q": query, "limit": max(1, min(20, limit))}
+        if original_names:
+            params["lang"] = ""
         if kind:
             params["kind"] = kind
         return self._request("GET", "/search", params=params).get("items", [])
@@ -72,6 +81,41 @@ class BingersClient:
         data = self._request("GET", f"/titles/{requests.utils.quote(ref, safe='')}/episodes", params=params)
         items = data.get("items", [])
         return items if isinstance(items, list) else []
+
+    def check(self, refs: list[str]) -> dict[str, dict[str, Any]]:
+        """Your status with up to 100 titles: {ref: {status, last_watched_at, furthest, title, …}}."""
+        refs = [r for r in dict.fromkeys(refs) if r][:100]
+        if not refs:
+            return {}
+        data = self._request("GET", "/library/check", params={"titles": ",".join(refs)})
+        return {str(i.get("ref")): i for i in data.get("items", []) if isinstance(i, dict)}
+
+    def titles(self, ids: list[str]) -> list[dict[str, Any]]:
+        """Catalog details (name, year, runtime, …) for up to 100 titles."""
+        ids = [i for i in dict.fromkeys(ids) if i][:100]
+        if not ids:
+            return []
+        return self._request("GET", "/titles", params={"ids": ",".join(ids)}).get("items", [])
+
+    def title(self, ref: str) -> dict[str, Any]:
+        """One title, with where to watch it in your country."""
+        return self._request("GET", f"/titles/{requests.utils.quote(ref, safe='')}")
+
+    def similar(self, ref: str, limit: int = 3) -> list[dict[str, Any]]:
+        """Titles like this one, leaving out what's already in your library."""
+        params = {"title": ref, "exclude_library": "true", "limit": max(1, min(20, limit))}
+        return self._request("GET", "/similar", params=params).get("items", [])
+
+    def watchlist(self, limit: int = 15) -> dict[str, Any]:
+        """The watch list as the app shows it: {"sections": {"watch_next": {count, items}, …}}."""
+        return self._request("GET", "/watchlist", params={"limit": limit})
+
+    def entries(self, cursor: str | None = None, limit: int = 10000) -> dict[str, Any]:
+        """Change feed of the watch history. Always pass back next_cursor."""
+        params: dict[str, Any] = {"limit": limit}
+        if cursor:
+            params["cursor"] = cursor
+        return self._request("GET", "/entries", params=params)
 
     def scrobble(self, items: list[dict[str, Any]], dry_run: bool = False) -> list[dict[str, Any]]:
         """Mark episodes/movies watched. Safe to retry: repeats within 12h are no-ops."""
@@ -87,6 +131,12 @@ class BingersClient:
     # -- plumbing ----------------------------------------------------------
 
     def _request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
+        if method == "GET":
+            params = dict(kwargs.get("params") or {})
+            params.setdefault("lang", self.lang)
+            if not params["lang"]:
+                del params["lang"]
+            kwargs["params"] = params
         try:
             resp = self.session.request(method, self.base_url + path, timeout=self.timeout, **kwargs)
         except requests.RequestException as exc:
