@@ -8,6 +8,9 @@ It then serves http://127.0.0.1:8080/requests/status.json.
 from __future__ import annotations
 
 import logging
+import os
+import re
+from urllib.parse import unquote, urlparse
 
 import requests
 
@@ -25,6 +28,7 @@ class VlcPlayer:
         self.timeout = timeout
         self.session = requests.Session()
         self._warned: set[str] = set()
+        self._path_cache: tuple[str | None, str | None] = (None, None)
 
     def poll(self) -> PlaybackState | None:
         if not self.password:
@@ -43,12 +47,48 @@ class VlcPlayer:
             data = resp.json()
         except ValueError:
             return None
-        return parse_status(data)
+        state = parse_status(data)
+        if state is None:
+            return None
+        # The status only has the file name; the playlist has the full path, whose folders
+        # ("Show/Season 1/03 - Pilot.mkv") help when the file name alone is too short.
+        full = self._full_path(state.file)
+        return PlaybackState(state.player, full, state.position, state.duration, state.paused) if full else state
+
+    def _full_path(self, filename: str) -> str | None:
+        if self._path_cache[0] == filename:
+            return self._path_cache[1]
+        path = None
+        try:
+            resp = self.session.get(self.url.replace("status.json", "playlist.json"), auth=("", self.password), timeout=self.timeout)
+            path = find_current_path(resp.json()) if resp.ok else None
+        except (requests.RequestException, ValueError):
+            path = None
+        if path and os.path.basename(path) != filename:
+            path = None  # the playlist moved on; don't mix files up
+        self._path_cache = (filename, path)
+        return path
 
     def _warn_once(self, key: str, message: str) -> None:
         if key not in self._warned:
             self._warned.add(key)
             log.warning(message)
+
+
+def find_current_path(playlist: dict) -> str | None:
+    """The local path of the item VLC's playlist marks as current, or None."""
+    stack = [playlist]
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, dict):
+            continue
+        if node.get("current") == "current" and str(node.get("uri", "")).startswith("file:"):
+            path = unquote(urlparse(node["uri"]).path)
+            if re.match(r"^/[A-Za-z]:/", path):  # file:///C:/... on Windows
+                path = path[1:]
+            return path
+        stack.extend(node.get("children") or [])
+    return None
 
 
 def parse_status(data: dict) -> PlaybackState | None:

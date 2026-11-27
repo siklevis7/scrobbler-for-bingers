@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 SESSION_EXPIRY_SECONDS = 6 * 3600  # keep counted time if you close a file and come back to it
 RESOLVE_RETRY_SECONDS = 60
 BACKLOG_FLUSH_SECONDS = 60
+MIN_VIDEO_SECONDS = 240  # shorter files are samples, trailers or clips: never marked
 
 # Event kinds passed to Tracker.on_event(kind, message)
 EVENT_PLAYING = "playing"  # a new file started and was matched
@@ -41,6 +42,7 @@ class Session:
     last_paused: bool = True
     watched_seconds: float = 0.0
     match: Match | None = None
+    matches: list[Match] = field(default_factory=list)  # best first, then runner-ups
     resolved: bool = False
     next_resolve_at: float = 0.0
     done: bool = False  # scrobbled, queued, or given up on
@@ -181,7 +183,13 @@ class Tracker:
         if session.resolved or now < session.next_resolve_at or session.media is None:
             return
         try:
-            session.match = self.matcher.resolve(session.media)
+            session.matches = self.matcher.resolve_all(session.media)
+            session.match = session.matches[0] if session.matches else None
+            if session.match and session.media.air_date and not session.media.episodes:
+                if not self._resolve_air_date(session):
+                    session.resolved = True
+                    session.done = True
+                    return
         except TransientError as exc:
             session.next_resolve_at = now + RESOLVE_RETRY_SECONDS
             log.info("Couldn't look up %s yet (%s); will retry", session.media.label(), exc)
@@ -204,12 +212,31 @@ class Tracker:
             self._emit(EVENT_UNMATCHED, f"Couldn't find \"{session.media.title}\" on Bingers")
             session.done = True
         else:
-            year = f" ({session.match.year})" if session.match.year else ""
-            log.info("  matched to Bingers: %s%s [%s]", session.match.name, year, session.match.ref)
+            name, year = session.match.name, session.match.year
+            shown = name if not year or name.endswith(f"({year})") else f"{name} ({year})"
+            log.info("  matched to Bingers: %s [%s]", shown, session.match.ref)
             self._emit(EVENT_PLAYING, session.media.label())
+
+    def _resolve_air_date(self, session: Session) -> bool:
+        """Daily shows named by date ("Show.2024.03.15"): find the episode that aired that day."""
+        media, match = session.media, session.match
+        assert media is not None and match is not None and media.air_date
+        episodes = self.client.episodes(match.ref)
+        if not episodes:  # very long-running shows need a season; daily shows use the year
+            episodes = self.client.episodes(match.ref, season=int(media.air_date[:4]))
+        hit = next((e for e in episodes if str(e.get("aired_at") or "").startswith(media.air_date)), None)
+        if hit is None:
+            log.warning("%s has no episode that aired on %s on Bingers", match.name, media.air_date)
+            self._emit(EVENT_UNMATCHED, f"No {match.name} episode aired on {media.air_date} on Bingers")
+            return False
+        session.media = replace(media, season=hit["season"], episodes=(hit["number"],))
+        log.info("  %s aired as S%02dE%02d", media.air_date, hit["season"], hit["number"])
+        return True
 
     def _ready(self, session: Session, state: PlaybackState) -> bool:
         if not session.resolved or session.match is None:
+            return False
+        if state.duration < MIN_VIDEO_SECONDS:
             return False
         if state.progress < self.settings.threshold:
             return False
@@ -222,9 +249,49 @@ class Tracker:
         label = session.media.label()
         items = build_items(session.media, session.match)
         self.last_scrobble = (label, items)
-        self._send(label, items)
+        results = self._send(label, items, quiet_unresolved=True)
+        if results and all(r.get("status") == "unresolved" for r in results):
+            self._recover(session, label)
 
-    def _send(self, label: str, items: list[dict[str, Any]]) -> None:
+    def _recover(self, session: Session, label: str) -> None:
+        """Bingers has no such episode on the matched show. Try the likely reasons, in order."""
+        media, match = session.media, session.match
+        assert media is not None and match is not None
+        try:
+            # Anime counted from the start of the show: "One Piece - 1071" -> S21E179.
+            if media.season is None and len(media.episodes) == 1:
+                regular = sorted(
+                    (e for e in self.client.episodes(match.ref)
+                     if isinstance(e.get("season"), int) and e["season"] > 0 and isinstance(e.get("number"), int)),
+                    key=lambda e: (e["season"], e["number"]),
+                )
+                n = media.episodes[0]
+                if 1 <= n <= len(regular):
+                    e = regular[n - 1]
+                    log.info("  episode %d from the start of %s is S%02dE%02d", n, match.name, e["season"], e["number"])
+                    items = [{"title": match.ref, "season": e["season"], "episode": e["number"]}]
+                    self.last_scrobble = (label, items)
+                    self._send(label, items)
+                    return
+            # A same-name show was picked: try the runner-ups, checking first without writing.
+            for alt in session.matches[1:]:
+                items = build_items(media, alt)
+                check = self.client.scrobble(items, dry_run=True)
+                if check and all(r.get("status") in ("ok", "already") for r in check):
+                    log.info("  %s has no such episode; it's %s (%s) instead", match.name, alt.name, alt.year or "?")
+                    session.match = alt
+                    self.last_scrobble = (label, items)
+                    self._send(label, items)
+                    return
+        except BingersError as exc:
+            log.warning("Couldn't double-check %s: %s", label, exc)
+        log.warning("Bingers has no episode %s. Add the right title under [overrides] in config.toml.", label)
+        self._record(label, "not found on Bingers")
+        self._emit(EVENT_ERROR, f"Bingers couldn't find {label}")
+
+    def _send(
+        self, label: str, items: list[dict[str, Any]], quiet_unresolved: bool = False
+    ) -> list[dict[str, Any]] | None:
         try:
             results = self.client.scrobble(items)
         except (TransientError, AuthError) as exc:
@@ -236,15 +303,17 @@ class Tracker:
                 self._emit(EVENT_AUTH, f"Bingers refused your token: {exc}")
             else:
                 self._emit(EVENT_QUEUED, f"{label} will be sent when Bingers is reachable")
-            return
+            return None
         except BingersError as exc:
             log.error("Bingers rejected %s: %s", label, exc)
             self._record(label, f"rejected: {exc}")
             self._emit(EVENT_ERROR, f"Bingers rejected {label}: {exc}")
-            return
+            return None
+        statuses = {r.get("status") for r in results}
+        if quiet_unresolved and results and statuses == {"unresolved"}:
+            return results  # the caller tries to recover before reporting a problem
         for result in results:
             log.info("Marked watched: %s", describe_result(result))
-        statuses = {r.get("status") for r in results}
         if statuses <= {"ok", "already"} and results:
             outcome = "already watched" if statuses == {"already"} else "marked watched"
             self._record(label, outcome)
@@ -253,6 +322,7 @@ class Tracker:
             detail = "; ".join(describe_result(r) for r in results) or "no result"
             self._record(label, detail)
             self._emit(EVENT_ERROR, f"{label}: {detail}")
+        return results
 
     def _record(self, label: str, result: str) -> None:
         if self.history is not None:

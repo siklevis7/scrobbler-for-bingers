@@ -22,6 +22,20 @@ test("pickBest prefers the right kind and year", () => {
   assert.equal(pickBest(movie, [show("m", "Inception", 2010, "movie")]).id, "m");
 });
 
+test("same-name shows: the year or country Bingers puts in the name decides", async () => {
+  const { splitTag } = await import("../lib/match.js");
+  assert.deepEqual(splitTag("Dark Matter (2024)"), ["Dark Matter", "2024"]);
+  const darkMatter = [show("dm24", "Dark Matter (2024)", 2024), show("dm15", "Dark Matter", 2015)];
+  assert.equal(pickBest({ kind: "episode", title: "Dark Matter", year: 2024 }, darkMatter).id, "dm24");
+  assert.equal(pickBest({ kind: "episode", title: "Dark Matter", year: 2023 }, darkMatter).id, "dm24"); // off by one
+  const outsider = [show("o20", "The Outsider (2020)", 2020), show("o68", "The Outsider", 1968)];
+  assert.equal(pickBest({ kind: "episode", title: "The Outsider", year: 2020 }, outsider).id, "o20");
+  const office = [show("uk", "The Office (UK)", 2001), show("us", "The Office (US)", 2005)];
+  assert.equal(pickBest({ kind: "episode", title: "The Office", country: "US" }, office).id, "us");
+  // A title that really contains a year still matches.
+  assert.equal(pickBest({ kind: "movie", title: "Blade Runner 2049" }, [show("br", "Blade Runner 2049", 2017, "movie")]).id, "br");
+});
+
 test("labels and scrobble items", () => {
   const ep = { kind: "episode", title: "Ozark", season: 4, episode: 12 };
   assert.equal(mediaLabel(ep), "Ozark S04E12");

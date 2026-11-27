@@ -163,6 +163,17 @@ test("embedded app data (Next.js, Plex, Jellyfin)", () => {
   assert.equal(P.parseAppData([list], "https://site.example/watch/ep2x").episode, 2);
 });
 
+test("show year and country in file names", () => {
+  const dm = P.parseMediaText("Dark.Matter.2024.S01E02.1080p.WEB.h264.mkv");
+  assert.deepEqual([dm.title, dm.year, dm.season, dm.episode], ["Dark Matter", 2024, 1, 2]);
+  const office = P.parseMediaText("The.Office.US.S02E03.720p.mkv");
+  assert.deepEqual([office.title, office.country], ["The Office", "US"]);
+  // Not years: a future-sounding title and a show named after a number.
+  assert.equal(P.parseMediaText("Blade.Runner.2099.S01E01.mkv").title, "Blade Runner 2099");
+  assert.equal(P.parseMediaText("1883.S01E02.1080p.mkv").title, "1883");
+  assert.equal(P.parseMediaText("12.12.12.S01E04.720p.10bit.WEBRip.2CH.x265.HEVC-PSA.mkv").title, "12 12 12");
+});
+
 test("web addresses", () => {
   assert.deepEqual(P.parseUrl("/watch/ozark-season-2-episode-3"), { title: "Ozark", season: 2, episode: 3, episodeTitle: "" });
   assert.equal(P.parseUrl("/tv/the-bear/s02e03").title, "The Bear");

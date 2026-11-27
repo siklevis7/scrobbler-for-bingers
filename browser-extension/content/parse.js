@@ -152,9 +152,18 @@
         if (title === episodeTitle) episodeTitle = "";
       }
       if (!title) return null;
-      const { title: name, year } = splitYear(title);
+      let { title: name, year } = splitYear(title);
+      let country = null;
+      // File names: "Dark.Matter.2024.S01E02" (the show's year) and "The.Office.US.S02E03".
+      if (filename) {
+        const c = name.match(/^(.+?)\s+(US|UK|AU|CA|NZ)$/);
+        if (c) [name, country] = [c[1], c[2]];
+        const y = !year && name.match(/^(.+?)\s+((?:19|20)\d{2})$/);
+        if (y && Number(y[2]) >= 1930 && Number(y[2]) <= new Date().getFullYear() + 1) [name, year] = [y[1], Number(y[2])];
+      }
       const out = { title: name, season: ep.season, episode: ep.episode, episodeTitle };
       if (year) out.year = year;
+      if (country) out.country = country;
       return out;
     }
 

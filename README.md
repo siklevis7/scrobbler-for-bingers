@@ -217,6 +217,25 @@ Right-click the tray icon for the menu:
 - Paused time and skipping ahead don't count toward that time.
 - If you're offline, the mark is saved with the time you watched it, and it's sent later.
 
+### File names it understands
+
+| File name | Read as |
+|---|---|
+| `Ozark.S04E12.720p.WEB.mkv`, `Ozark - 4x12.mkv` | Ozark, season 4, episode 12 |
+| `Dark.Matter.2024.S01E02.mkv` | Dark Matter **(2024)**, not the 2015 show of the same name |
+| `The.Office.US.S02E03.mkv` | The Office **(US)**, not the UK one |
+| `12.12.12.S01E04…mkv`, `1883.S01E02.mkv`, `9-1-1.S07E01.mkv`, `24.S01E01.mkv` | Shows named after numbers or dates |
+| `The.Daily.Show.2024.03.15.mkv` | The episode that aired on 15 March 2024 |
+| `[Group] Frieren - 12 (1080p).mkv` | Episode 12 counted from the start; it finds the right season |
+| `Show\Season 1\03 - Pilot.mkv` | Uses the folder names when the file name alone is too short |
+| `Dune.Part.Two.2024.2160p.mkv`, `Se7en.1995.mkv` | Movies, with the year to tell remakes apart |
+| `…sample.mkv`, `…trailer…mkv`, files under 4 minutes | Ignored |
+
+When Bingers has two shows with the same name, it picks the one whose year (or country)
+matches your file name. A year that's off by one also counts, because premiere dates differ
+between databases. If the chosen show turns out not to have that episode, it tries the next
+best show automatically.
+
 ### When it picks the wrong show
 
 Right-click the tray icon > **Settings > Open Settings File**, and pin the title under

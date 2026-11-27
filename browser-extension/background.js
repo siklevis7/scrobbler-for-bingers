@@ -2,7 +2,7 @@
 // Bingers, counts real watch time, and marks things watched at the threshold.
 
 import * as api from "./lib/api.js";
-import { buildItems, findEpisodeByName, mediaLabel, normalize, pickBest, searchVariants } from "./lib/match.js";
+import { buildItems, findEpisodeByName, mediaLabel, normalize, pickBest, searchVariants, splitTag } from "./lib/match.js";
 import { MIN_VIDEO_SECONDS, applyReport, expired, isReady, mediaKey, neededSeconds, newSession } from "./lib/tracker.js";
 import { syncSites } from "./lib/sites.js";
 import * as store from "./lib/storage.js";
@@ -27,9 +27,10 @@ function persist() {
   chrome.storage.session.set({ sessions, tabInfo, tabMedia, tabManual }).catch(() => {});
 }
 
+// "v2": matches saved before same-name shows were told apart by year are ignored.
 function cacheKeyFor(media) {
   const kind = media.kind === "episode" ? "show" : "movie";
-  return `${kind}|${normalize(media.title)}|${media.year || ""}`;
+  return `v2|${kind}|${normalize(media.title)}|${media.year || ""}`;
 }
 
 function siteOf(sender) {
@@ -89,10 +90,11 @@ function toMedia(raw) {
       episodeTitle: raw.episodeTitle || "",
       lookup,
       year,
+      country: raw.country || null,
       source,
     };
   }
-  return { kind: "movie", title, year, source };
+  return { kind: "movie", title, year, country: raw.country || null, source };
 }
 
 async function onReport(msg, tabId, site) {
@@ -196,15 +198,26 @@ async function resolve(id, token) {
     let match = await store.getCachedMatch(cacheKey);
     if (!match) {
       try {
-        // The exact name first, then variants ("Star Wars: Andor" -> "Andor", "The Office (US)").
-        for (const query of searchVariants(media.title)) {
-          const candidate = pickBest({ ...media, title: query }, await api.search(token, query, kind));
-          if (candidate) {
+        // The exact name first, then variants ("Dark Matter 2024", "Star Wars: Andor" -> "Andor").
+        // A result from the wrong year is only kept as a fallback while other searches run.
+        const yearFits = (c) => {
+          const tagYear = Number(splitTag(c.title)[1]) || null;
+          const y = Number.isInteger(c.year) ? c.year : tagYear;
+          return !media.year || (y && Math.abs(y - media.year) <= 1);
+        };
+        let fallback = null;
+        for (const query of searchVariants(media.title, media.year)) {
+          // For the "Dark Matter 2024" search, still compare names as "Dark Matter".
+          const searchAs = media.year && query === `${media.title} ${media.year}` ? media : { ...media, title: query };
+          const candidate = pickBest(searchAs, await api.search(token, query, kind));
+          if (candidate && yearFits(candidate)) {
             match = { ref: candidate.id, name: candidate.title || media.title, year: candidate.year ?? null };
-            await store.setCachedMatch(cacheKey, match);
             break;
           }
+          fallback = fallback || candidate;
         }
+        if (!match && fallback) match = { ref: fallback.id, name: fallback.title || media.title, year: fallback.year ?? null };
+        if (match) await store.setCachedMatch(cacheKey, match);
       } catch (err) {
         if (err.transient) {
           session.retryAt = Date.now() + RESOLVE_RETRY_MS;

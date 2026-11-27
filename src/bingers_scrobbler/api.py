@@ -66,6 +66,13 @@ class BingersClient:
             params["kind"] = kind
         return self._request("GET", "/search", params=params).get("items", [])
 
+    def episodes(self, ref: str, season: int | None = None) -> list[dict[str, Any]]:
+        """A show's episodes: [{id, season, number, title, aired_at}]."""
+        params = {"season": season} if season is not None else None
+        data = self._request("GET", f"/titles/{requests.utils.quote(ref, safe='')}/episodes", params=params)
+        items = data.get("items", [])
+        return items if isinstance(items, list) else []
+
     def scrobble(self, items: list[dict[str, Any]], dry_run: bool = False) -> list[dict[str, Any]]:
         """Mark episodes/movies watched. Safe to retry: repeats within 12h are no-ops."""
         if not items:
